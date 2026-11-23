@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Results: {{ session.query }}{% endblock %}
+{% macro pct(v) %}{{ '—' if v is none else '%.0f%%'|format(v * 100) }}{% endmacro %}
+{% macro num(v) %}{{ '—' if v is none else '%.3f'|format(v) }}{% endmacro %}
+{% macro grade_chip(g, mode) -%}
+  {%- if g == 'unjudged' -%}<span class="chip unjudged" title="Not rated yet">?</span>
+  {%- elif g is none -%}<span class="chip skipped" title="Skipped: not scored">skip</span>
+  {%- elif mode == 'binary' -%}<span class="chip g{{ g }}">{{ '✓' if g == 3 else '✗' }}</span>
+  {%- else -%}<span class="chip g{{ g }}">{{ g }}</span>{%- endif -%}
+{%- endmacro %}
+{% block content %}
+<h1>{{ session.query }}</h1>
+<p class="need"><strong>Need:</strong> {{ session.information_need }}
+  {% if session.goal %}<br><strong>Goal:</strong> {{ session.goal }}{% endif %}
+  <br><span class="muted">{{ session.rater }} · {{ view.rated }} rated, {{ view.skipped }} skipped ·
+  rubric {{ session.rubric_version }}</span></p>
+
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+
+{% if not view.has_ratings %}
+<p class="notice">Nothing is rated yet, so there's nothing to measure.
+  <a href="{{ url_for('search_eval.rate', session_id=session.id) }}">Rate the records</a> first.</p>
+{% endif %}
+
+<div class="results-grid">
+  {% for col in view.columns %}
+  {% set run = col.run %}
+  <section class="column{% if col.is_baseline %} baseline{% endif %}">
+    <header>
+      <p class="eyebrow">{{ 'Baseline' if col.is_baseline else 'Variant ' ~ loop.index0 }}</p>
+      <h2>{{ environments.get(col.environment, col.environment) }}</h2>
+      <p class="mono config">{{ col.config }}</p>
+    </header>
+
+    {% if run.status != 'ok' %}
+    <p class="error" role="alert">This run failed. {{ run.error }}</p>
+    {% else %}
+    <dl class="figures">
+      <div class="headline">
+        <dt>{{ col.headline_name }}</dt>
+        <dd>{{ num(col.headline) }}
+          {% if col.delta is not none %}
+          <span class="delta {{ 'up' if col.delta > 0 else ('down' if col.delta < 0 else 'flat') }}">
+            {{ '%+.3f'|format(col.delta) }}</span>
+          {% endif %}</dd>
+      </div>
+      <div><dt>judged@{{ view.k }}</dt><dd>{{ pct(col.figures.judged) }}</dd></div>
+      {% if col.params %}
+      <div><dt>NDCG could be</dt><dd>{{ num(col.params.ndcg_lo) }}–{{ num(col.params.ndcg_hi) }}</dd></div>
+      {% endif %}
+      {% if not col.is_baseline %}
+      <div><dt>overlap@{{ view.k }}</dt><dd>{{ pct(col.figures.overlap) }}</dd></div>
+      <div><dt>RBO p=0.9</dt><dd>{{ num(col.figures.rbo) }}</dd></div>
+      {% endif %}
+    </dl>
+    {% if col.params and col.params.incomplete %}
+    <p class="warn">Too few of this ranking's top {{ view.k }} are rated to trust the number
+      ({{ col.params.judged_in_top_k }} of {{ view.k }}).
+      <a href="{{ url_for('search_eval.rate', session_id=session.id) }}">Rate the rest</a>.</p>
+    {% endif %}
+
+    <table class="ranking">
+      <thead><tr><th scope="col">#</th><th scope="col">Rating</th><th scope="col">Record</th>
+        {% if not col.is_baseline %}<th scope="col" title="Rank in the baseline">Was</th>{% endif %}</tr></thead>
+      <tbody>
+        {% for row in col.rows %}
+        <tr>
+          <td class="num">{{ row.rank }}</td>
+          <td>{{ grade_chip(row.grade, session.rating_mode) }}</td>
+          <td class="rec"><span class="rec-title">{{ row.title or row.bibcode }}</span>
+            <span class="mono muted">{{ row.bibcode }}</span></td>
+          {% if not col.is_baseline %}
+          <td class="num">
+            {%- if row.baseline_rank is none %}<span class="chip new">new</span>
+            {%- elif row.baseline_rank == row.rank %}<span class="muted">=</span>
+            {%- else %}{{ row.baseline_rank }}{% endif -%}
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+
+<section class="variant">
+  <h2>Try another variant</h2>
+  <p class="hint">It runs against the same rated records. Anything new it brings into the top
+    {{ config['RATE_DEPTH'] }} goes to the rating page first.</p>
+  <form method="post" action="{{ url_for('search_eval.add_variant', session_id=session.id) }}" class="inline">
+    <label>Environment
+      <select name="env">
+        {% for name, label in environments.items() %}<option value="{{ name }}">{{ label }}</option>{% endfor %}
+      </select></label>
+    <label>qf <input name="qf" class="mono" placeholder="title^2 abstract^1"></label>
+    <label>boost <input name="boost" class="mono" placeholder="pow(citation_count,0.1)"></label>
+    <button type="submit" class="primary">Run it</button>
+  </form>
+  {% include "_param_notes.html" %}
+</section>
+
+<p class="muted foot">Every value here is computed on the server and stored with its run,
+  configuration and parameters. Unrated records count toward nothing, and they're shown
+  as <span class="chip unjudged">?</span>. NDCG uses {{ view.gain_label }} gain against
+  one shared pool of rated records, so the columns are comparable.</p>
+{% endblock %}

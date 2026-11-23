@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}New session{% endblock %}
+{% block content %}
+<h1>Start a rating session</h1>
+<p class="lede">Run one query in two configurations, rate the records they return without
+seeing which side returned what, then see how each ranking measures up. After that, change
+qf or boost and see the effect straight away.</p>
+
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+
+<form method="post" action="{{ url_for('search_eval.create_session') }}" class="stack">
+  <fieldset>
+    <legend>What you're looking for</legend>
+    <label>Query <input name="query" required value="{{ form.get('query', '') }}"
+      placeholder="e.g. triton atmosphere"></label>
+    <label>Information need
+      <textarea name="information_need" required rows="2"
+        placeholder="What a relevant paper would tell you, in a sentence">{{ form.get('information_need', '') }}</textarea></label>
+    <label>Goal <input name="goal" value="{{ form.get('goal', '') }}"
+      placeholder="e.g. writing a review, finding a citation, checking a release"></label>
+    <label>Discipline <input name="discipline" value="{{ form.get('discipline', '') }}"
+      placeholder="e.g. planetary science"></label>
+    <label>Your name <input name="rater" required value="{{ form.get('rater', '') }}"></label>
+    <div class="radios" role="radiogroup" aria-label="Kind of search">
+      {% for value, label in intents.items() %}
+      <label class="radio"><input type="radio" name="intent" value="{{ value }}"
+        {% if form.get('intent', 'topical') == value %}checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+    </div>
+  </fieldset>
+
+  <div class="columns">
+    {% for side, title in [('a', 'Baseline'), ('b', 'Variant')] %}
+    <fieldset>
+      <legend>{{ title }}</legend>
+      <label>Environment
+        <select name="env_{{ side }}">
+          {% set default = config['DEFAULT_ENVIRONMENT_A'] if side == 'a' else config['DEFAULT_ENVIRONMENT_B'] %}
+          {% for name, label in environments.items() %}
+          <option value="{{ name }}" {% if form.get('env_' ~ side, default) == name %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select></label>
+      <label>qf <input name="{{ side }}_qf" value="{{ form.get(side ~ '_qf', '') }}"
+        placeholder="title^2 abstract^1 author^1.5" class="mono"></label>
+      <label>boost <input name="{{ side }}_boost" value="{{ form.get(side ~ '_boost', '') }}"
+        placeholder="e.g. pow(citation_count,0.1)" class="mono"></label>
+      <p class="hint">Leave both blank for the environment's default ranking.</p>
+    </fieldset>
+    {% endfor %}
+  </div>
+
+  {% include "_param_notes.html" %}
+  <p class="hint">Until there is a token for the development API, run both sides on
+  production and put the change you want to test in the variant's qf or boost.</p>
+  <button type="submit" class="primary">Run both and start rating</button>
+</form>
+
+{% if recent %}
+<h2>Recent sessions</h2>
+<ul class="sessions">
+  {% for s in recent %}
+  <li><a href="{{ url_for('search_eval.results', session_id=s.id) }}">{{ s.query }}</a>
+    <span class="muted">· {{ s.rater }} · {{ s.created_at.strftime('%d %b %Y') }}</span></li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Rate: {{ session.query }}{% endblock %}
+{% block content %}
+<div class="rate-layout">
+  <section class="records">
+    <h1>{{ session.query }}</h1>
+    <p class="need"><strong>Need:</strong> {{ session.information_need }}
+      {% if session.goal %}<br><strong>Goal:</strong> {{ session.goal }}{% endif %}</p>
+
+    {% for run in failed %}
+    <p class="error" role="alert">One side did not run, so these records come from the other
+    side only. {{ run.error }}</p>
+    {% endfor %}
+
+    {% if new_records %}
+    <p class="notice">That change brought in {{ new_records }} record{{ '' if new_records == 1 else 's' }}
+    nobody has rated yet. They're marked <span class="chip new">new</span> below.</p>
+    {% endif %}
+
+    <p class="muted">{{ pool|length }} records from both sides, merged and shuffled. Which side
+    returned each one is shown after you submit. <span id="progress">{{ unrated }} still to rate.</span></p>
+
+    <form method="post" action="{{ url_for('search_eval.submit_ratings', session_id=session.id) }}" id="rating-form">
+      <ol class="pool">
+        {% for record in pool %}
+        {% set j = judgements.get(record.bibcode) %}
+        {% set current = none if j is none else ('skip' if j.rating is none else
+            (('up' if j.rating == 3 else 'down') if session.rating_mode == 'binary' else j.rating|string)) %}
+        <li class="record{% if j is none %} unrated{% endif %}" tabindex="0" data-bibcode="{{ record.bibcode }}">
+          <h2 class="title">{{ record.title or record.bibcode }}
+            {% if j is none and new_records %}<span class="chip new">new</span>{% endif %}</h2>
+          <p class="byline">
+            {%- if record.authors %}{{ record.authors[:3]|join('; ') }}{% if record.authors|length > 3 %} et al.{% endif %}{% endif -%}
+            {%- if record.year %} · {{ record.year }}{% endif -%}
+            {%- if record.pub %} · {{ record.pub }}{% endif -%}
+          </p>
+          {% if record.abstract %}<p class="abstract">{{ record.abstract }}</p>{% endif %}
+          <p class="bibcode mono"><a href="https://scixplorer.org/abs/{{ record.bibcode }}/abstract"
+            target="_blank" rel="noopener">{{ record.bibcode }}</a></p>
+          <fieldset class="choices">
+            <legend class="visually-hidden">Rating for {{ record.title or record.bibcode }}</legend>
+            {% for option in options %}
+            <label class="choice choice-{{ option.value }}">
+              <input type="radio" name="rating:{{ record.bibcode }}" value="{{ option.value }}"
+                {% if current == option.value %}checked{% endif %}>
+              <span class="key">{{ option.value if option.value in ['0','1','2','3'] else option.value[0] }}</span>
+              {{ option.label }}</label>
+            {% endfor %}
+          </fieldset>
+          <label class="note">Note <input name="note:{{ record.bibcode }}" value="{{ j.note if j and j.note else '' }}"
+            placeholder="Optional. Say why, if you skip or rate it 0 or 3"></label>
+        </li>
+        {% endfor %}
+      </ol>
+      <button type="submit" class="primary">Submit ratings and see results</button>
+    </form>
+  </section>
+
+  <aside class="rubric" aria-label="Rubric">
+    <h2>Rubric</h2>
+    <dl>
+      {% for option in options %}
+      <dt><span class="key">{{ option.value if option.value in ['0','1','2','3'] else option.value[0] }}</span> {{ option.label }}</dt>
+      <dd>{{ option.definition }}</dd>
+      {% endfor %}
+    </dl>
+    <p class="hint">Keyboard: <kbd>j</kbd>/<kbd>k</kbd> to move,
+      {% if session.rating_mode == 'binary' %}<kbd>u</kbd>/<kbd>d</kbd>{% else %}<kbd>0</kbd>–<kbd>3</kbd>{% endif %}
+      to rate, <kbd>s</kbd> to skip.</p>
+    <p class="hint">Rubric {{ session.rubric_version }}.</p>
+  </aside>
+</div>
+
+<script>
+(function () {
+  var records = Array.prototype.slice.call(document.querySelectorAll(".record"));
+  var progress = document.getElementById("progress");
+  var keys = {{ {'binary': {'u': 'up', 'd': 'down', 's': 'skip'},
+                 'graded': {'0': '0', '1': '1', '2': '2', '3': '3', 's': 'skip'}}[session.rating_mode]|tojson }};
+
+  function current() { return records.indexOf(document.activeElement.closest(".record")); }
+  function focusAt(i) {
+    if (i < 0 || i >= records.length) return;
+    records[i].focus();
+    records[i].scrollIntoView({ block: "nearest" });
+  }
+  function refresh() {
+    var left = records.filter(function (r) { return !r.querySelector("input[type=radio]:checked"); }).length;
+    records.forEach(function (r) {
+      r.classList.toggle("unrated", !r.querySelector("input[type=radio]:checked"));
+    });
+    progress.textContent = left === 0 ? "All rated." : left + " still to rate.";
+  }
+
+  document.addEventListener("keydown", function (e) {
+    if (e.target.matches("input[type=text], input:not([type]), textarea")) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var i = current();
+    if (e.key === "j") { e.preventDefault(); focusAt(i + 1); return; }
+    if (e.key === "k") { e.preventDefault(); focusAt(i - 1); return; }
+    if (i < 0 || !(e.key in keys)) return;
+    var input = records[i].querySelector('input[type=radio][value="' + keys[e.key] + '"]');
+    if (!input) return;
+    e.preventDefault();
+    input.checked = true;
+    refresh();
+    focusAt(i + 1);
+  });
+  document.getElementById("rating-form").addEventListener("change", refresh);
+  refresh();
+})();
+</script>
+{% endblock %}

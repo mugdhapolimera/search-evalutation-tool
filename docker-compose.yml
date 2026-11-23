@@ -1,0 +1,20 @@
+# Local Postgres for development and tests. The app itself runs from a venv
+# (see README); the deploy image is built in BeeHive from base-microimage.
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: search_eval
+      POSTGRES_PASSWORD: search_eval
+      POSTGRES_DB: search_eval
+    ports:
+      - "5432:5432"
+    volumes:
+      - search_eval_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U search_eval"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  search_eval_pg:

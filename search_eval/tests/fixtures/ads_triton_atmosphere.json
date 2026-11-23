@@ -1,0 +1,145 @@
+{
+ "responseHeader": {
+  "status": 0,
+  "QTime": 8,
+  "params": {
+   "q": "triton atmosphere",
+   "fl": "bibcode,alternate_bibcode,identifier,doi,title,author,year,pub,abstract,entry_date,doctype,publisher",
+   "start": "0",
+   "rows": "5",
+   "wt": "json"
+  }
+ },
+ "response": {
+  "numFound": 1127,
+  "start": 0,
+  "numFoundExact": true,
+  "docs": [
+   {
+    "bibcode": "1990Natur.344..315I",
+    "author": [
+     "Ingersoll, A. P."
+    ],
+    "doctype": "article",
+    "doi": [
+     "10.1038/344315a0"
+    ],
+    "identifier": [
+     "10.1038/344315a0",
+     "1990Natur.344..315I"
+    ],
+    "pub": "Nature",
+    "title": [
+     "Dynamics of Triton's atmosphere"
+    ],
+    "year": "1990",
+    "entry_date": "1995-08-03T00:00:00Z",
+    "publisher": "Springer"
+   },
+   {
+    "bibcode": "2024A&A...682L..24S",
+    "abstract": "Context. In about 2000, the south pole of Triton experienced an extreme summer solstice that occurs every ∼650 years, wh…",
+    "alternate_bibcode": [
+     "2024arXiv240202476S"
+    ],
+    "author": [
+     "Sicardy, B.",
+     "Tej, A.",
+     "Gomes-Júnior, A. R.",
+     "Romanov, F. D."
+    ],
+    "doctype": "article",
+    "doi": [
+     "10.1051/0004-6361/202348756",
+     "10.48550/arXiv.2402.02476"
+    ],
+    "identifier": [
+     "10.48550/arXiv.2402.02476",
+     "10.1051/0004-6361/202348756",
+     "arXiv:2402.02476",
+     "2024arXiv240202476S",
+     "2024A&A...682L..24S"
+    ],
+    "pub": "Astronomy and Astrophysics",
+    "title": [
+     "Constraints on the evolution of the Triton atmosphere from occultations: 1989-2022"
+    ],
+    "year": "2024",
+    "entry_date": "2024-03-03T00:00:00Z",
+    "publisher": "EDP"
+   },
+   {
+    "bibcode": "1984Icar...58..312T",
+    "abstract": "Triton's seasons differ materially from those of Pluto owing to four important differences in the governing physics: Fir…",
+    "author": [
+     "Trafton, L."
+    ],
+    "doctype": "article",
+    "doi": [
+     "10.1016/0019-1035(84)90048-4"
+    ],
+    "identifier": [
+     "1984Icar...58..312T",
+     "10.1016/0019-1035(84)90048-4"
+    ],
+    "pub": "Icarus",
+    "title": [
+     "Large seasonal variations in Triton's atmosphere"
+    ],
+    "year": "1984",
+    "entry_date": "1997-05-14T00:00:00Z",
+    "publisher": "Elsevier"
+   },
+   {
+    "bibcode": "1995netr.conf.1031Y",
+    "abstract": "The structure of Triton's lower atmosphere is determined primarily through interactions with its surface. The temperatur…",
+    "author": [
+     "Yelle, R. V.",
+     "Lunine, J. I.",
+     "Pollack, J. B.",
+     "Brown, R. H."
+    ],
+    "doctype": "inproceedings",
+    "identifier": [
+     "1995netr.conf.1031Y"
+    ],
+    "pub": "Neptune and Triton",
+    "title": [
+     "Lower atmospheric structure and surface-atmosphere interactions on Triton."
+    ],
+    "year": "1995",
+    "entry_date": "2007-10-16T00:00:00Z"
+   },
+   {
+    "bibcode": "1995JGR...10021271K",
+    "abstract": "The photochemistry of 32 neutral and 21 ion species in Triton's atmosphere is considered. Parent species N<SUB>2</SUB>, …",
+    "alternate_bibcode": [
+     "1995JGR...10011271K"
+    ],
+    "author": [
+     "Krasnopolsky, Vladimir A.",
+     "Cruikshank, Dale P."
+    ],
+    "doctype": "article",
+    "doi": [
+     "10.1029/95JE01904"
+    ],
+    "identifier": [
+     "1995JGR...10011271K",
+     "10.1029/95JE01904",
+     "1995JGR...10021271K"
+    ],
+    "pub": "Journal of Geophysical Research",
+    "title": [
+     "Photochemistry of Triton's atmosphere and ionosphere"
+    ],
+    "year": "1995",
+    "entry_date": "2000-02-04T00:00:00Z",
+    "publisher": "Wiley"
+   }
+  ]
+ },
+ "allocatedBytes": 10057984,
+ "filtered": "true",
+ "access_modality": "api"
+}
