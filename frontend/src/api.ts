@@ -3,7 +3,6 @@
 export type Grade = 0 | 1 | 2 | 3 | 'skip' | null;
 export type Intent = 'topical' | 'author' | 'known_item';
 export type RatingMode = 'graded' | 'binary';
-export type RawRating = '3' | '2' | '1' | '0' | 'up' | 'down' | 'skip';
 
 export interface Option {
   value: string;
@@ -100,36 +99,37 @@ export interface SessionSummary {
   rated: number;
 }
 
-export interface PoolRecord {
+export interface BoardRecord {
   bibcode: string;
   title: string | null;
   authors: Authors;
   year: string | null;
   pub: string | null;
-  doctype: string | null;
   abstract: string | null;
-  rating: RawRating | null;
-  note: string | null;
-}
-
-export interface Pool {
-  information_need: string | null;
-  rating_mode: RatingMode;
-  options: Option[];
-  records: PoolRecord[];
-}
-
-export interface IdealRecord {
-  bibcode: string;
-  title: string | null;
-  year?: string | null;
-  pub?: string | null;
   note?: string | null;
 }
 
-export interface Ideal {
-  buckets: { grade: number; label: string; ordered: boolean; records: IdealRecord[] }[];
-  skipped: IdealRecord[];
+export interface BoardGroup {
+  grade: number;
+  label: string;
+  definition: string;
+  ordered: boolean;
+  records: BoardRecord[];
+}
+
+export interface Board {
+  information_need: string | null;
+  rating_mode: RatingMode;
+  groups: BoardGroup[];
+  skip: { label: string; definition: string };
+  skipped: BoardRecord[];
+  unsorted: BoardRecord[];
+}
+
+export interface BoardSave {
+  rater: string;
+  groups: { grade: number; ordered: boolean; bibcodes: string[] }[];
+  skipped: { bibcode: string; note: string | null }[];
 }
 
 export class ApiError extends Error {}
@@ -157,9 +157,7 @@ export const api = {
     request<Session>('PATCH', `/sessions/${id}`, body),
   tweak: (id: number, body: { env: string; qf?: string; boost?: string }) =>
     request<Session>('POST', `/sessions/${id}/runs`, body),
-  pool: (id: number) => request<Pool>('GET', `/sessions/${id}/pool`),
-  rate: (id: number, body: { bibcode: string; rating: RawRating | null; note?: string; rater: string }) =>
-    request<Session>('PUT', `/sessions/${id}/judgements`, body),
-  ideal: (id: number) => request<Ideal>('GET', `/sessions/${id}/ideal`),
-  setIdeal: (id: number, order: string[]) => request<Ideal>('PUT', `/sessions/${id}/ideal`, { order }),
+  board: (id: number) => request<Board>('GET', `/sessions/${id}/board`),
+  saveBoard: (id: number, body: BoardSave) =>
+    request<{ session: Session; board: Board }>('PUT', `/sessions/${id}/board`, body),
 };

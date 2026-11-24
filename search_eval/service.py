@@ -26,12 +26,10 @@ from .models import (
 )
 from .scoring.metrics import score_run
 
-# What a submitted rating means, per rating mode. A skip is unjudged (None),
-# never 0. Thumbs are stored as 3 and 0 so both modes share one integer column.
-RATING_VALUES = {
-    "graded": {"3": 3, "2": 2, "1": 1, "0": 0, "skip": None},
-    "binary": {"up": 3, "down": 0, "skip": None},
-}
+# The rating groups a board may hold, top first. Author searches are right or
+# wrong person, stored as 3 and 0 so both modes share one integer column. A
+# skip is unjudged (NULL), never 0.
+GRADES = {"graded": (3, 2, 1, 0), "binary": (3, 0)}
 
 
 class SessionError(ValueError):
@@ -239,118 +237,106 @@ def rating_pool(session, depth):
     return records
 
 
-def save_judgement(db, session, data, config):
-    """Store one rating as soon as it is made, then rescore.
+def save_board(db, session, data, config):
+    """Store the rater's board: ratings and ranking in one step.
 
-    Saving per record means a closed tab loses nothing. `rating` None clears a
-    rating back to unrated.
+    The board is the rating groups, top grade first, each holding records in
+    the rater's order, plus the records the rater can't judge. A record's group
+    is its rating and its place in the group is its rank, so the ranking can
+    never contradict the ratings (synthesis R1). Records on no group are
+    unrated. The whole board is sent on every move, so a closed tab loses
+    nothing and a rating and its rank are never saved apart.
+
+    `data`: {"rater", "groups": [{"grade", "ordered", "bibcodes"}],
+    "skipped": [{"bibcode", "note"}]}. `ordered` says the rater put that group
+    in an order of their own; otherwise its records are tied.
     """
     rater = _clean(data.get("rater"))
     if rater is None:
         raise SessionError("Say who is rating first.")
     if not session.information_need:
         raise SessionError("Describe what you were looking for before rating.")
-    bibcode = data.get("bibcode") or ""
     identifiers = {r.bibcode: r.identifiers for run in session.runs for r in run.results}
-    # Only this session's own records can be rated. Anything else would sit in
-    # the pool unseen, change IDCG, and never appear on a page.
-    if bibcode not in identifiers:
-        raise SessionError(f"{bibcode!r} is not one of this session's records.")
+    allowed = GRADES[session.rating_mode]
+    placed, notes, order, ordered_grades = {}, {}, [], set()
 
-    existing = next((j for j in session.judgements if j.bibcode == bibcode), None)
-    raw = data.get("rating")
-    if raw is None:
-        if existing is not None:
-            session.judgements.remove(existing)
-            db.delete(existing)
-    else:
-        values = RATING_VALUES[session.rating_mode]
-        if raw not in values:
-            raise SessionError(f"{raw!r} is not a rating in {session.rating_mode} mode.")
-        if existing is None:
-            existing = Judgement(
+    def place(bibcode, rating):
+        # Only this session's own records can be rated. Anything else would
+        # sit in the pool unseen, change IDCG, and never appear on a page.
+        if bibcode not in identifiers:
+            raise SessionError(f"{bibcode!r} is not one of this session's records.")
+        if bibcode in placed:
+            raise SessionError(f"{bibcode!r} is in two places on the board.")
+        placed[bibcode] = rating
+
+    groups = sorted(data.get("groups") or [], key=lambda g: -_grade(g.get("grade"), allowed))
+    if len({g["grade"] for g in groups}) != len(groups):
+        raise SessionError("Each rating group can appear once.")
+    for group in groups:
+        for bibcode in group.get("bibcodes") or []:
+            place(bibcode, group["grade"])
+            order.append(bibcode)
+        if group.get("ordered"):
+            ordered_grades.add(group["grade"])
+    for item in data.get("skipped") or []:
+        place(item.get("bibcode"), None)
+        notes[item["bibcode"]] = _clean(item.get("note"))
+
+    existing = {j.bibcode: j for j in session.judgements}
+    for bibcode, judgement in existing.items():
+        if bibcode not in placed:
+            session.judgements.remove(judgement)
+            db.delete(judgement)
+    for bibcode, rating in placed.items():
+        judgement = existing.get(bibcode)
+        if judgement is None:
+            judgement = Judgement(
                 bibcode=bibcode,
                 identifiers=identifiers[bibcode],
                 rating_mode=session.rating_mode,
                 rubric_version=session.rubric_version,
+                rating=rating,
+                rater=rater,
             )
-            session.judgements.append(existing)
-            db.add(existing)
-        existing.rating = values[raw]
-        existing.rater = rater
-        if "note" in data:
-            existing.note = _clean(data.get("note"))
+            session.judgements.append(judgement)
+            db.add(judgement)
+        elif judgement.rating != rating:
+            # The rater is whoever last changed the rating, not whoever last
+            # moved the record within its group.
+            judgement.rating = rating
+            judgement.rater = rater
+        if bibcode in notes:
+            judgement.note = notes[bibcode]
     db.flush()
-    rebuild_ideal_ranking(db, session)
+    _write_ideal(db, session, [(b, placed[b]) for b in order], ordered_grades)
     score_session(db, session, config)
-    return existing
+    return session
 
 
-# --- the ideal ranking ------------------------------------------------------
+def _grade(value, allowed):
+    if value not in allowed:
+        raise SessionError(f"{value!r} is not a rating group here; use one of {list(allowed)}.")
+    return value
 
 
-def rebuild_ideal_ranking(db, session):
-    """Regroup rated records into grade buckets, keeping any order the rater
-    already gave within a bucket.
-
-    A record whose grade changed joins the end of its new bucket. A bucket the
-    rater has ordered stays ordered; the others stay tied.
-    """
-    previous = [(row.bibcode, row.tie_group) for row in session.ideal_ranking]
-    position_of = {b: i for i, (b, _) in enumerate(previous)}
-    grade_of = dict(previous)
-    ordered_grades = {row.tie_group for row in session.ideal_ranking if row.ordered}
-    rated = [j for j in session.judgements if j.rating is not None]
-
-    def key(j):
-        kept = grade_of.get(j.bibcode) == j.rating
-        return (-j.rating, not kept, position_of[j.bibcode] if kept else 0, j.bibcode)
-
-    _write_ideal(db, session, sorted(rated, key=key), ordered_grades)
-
-
-def set_ideal_order(db, session, order):
-    """Store the rater's order of the rated records.
-
-    The order must hold every rated record once, and may only reorder records
-    within a grade: putting a lower grade above a higher one would contradict
-    the ratings (synthesis R1), so it is refused and the grade must change
-    instead. Buckets whose order changed are marked as ordered.
-    """
-    rated = {j.bibcode: j for j in session.judgements if j.rating is not None}
-    if len(order) != len(set(order)) or set(order) != set(rated):
-        raise SessionError("The order must list every rated record exactly once.")
-    for above, below in zip(order, order[1:]):
-        if rated[above].rating < rated[below].rating:
-            raise SessionError(
-                "A record can't go above one with a higher rating. "
-                "Change its rating to move it to another group."
-            )
-    before = [row.bibcode for row in session.ideal_ranking]
-    ordered_grades = {row.tie_group for row in session.ideal_ranking if row.ordered}
-    for grade in {j.rating for j in rated.values()}:
-        old = [b for b in before if b in rated and rated[b].rating == grade]
-        new = [b for b in order if rated[b].rating == grade]
-        if old != new:
-            ordered_grades.add(grade)
-    _write_ideal(db, session, [rated[b] for b in order], ordered_grades)
-
-
-def _write_ideal(db, session, judgements, ordered_grades):
+def _write_ideal(db, session, placed, ordered_grades):
+    """Replace the session's ideal ranking with `placed`, a list of
+    (bibcode, grade) in rank order."""
     # Delete and flush before inserting, so the (session, position) unique
     # constraint never sees the old and new rows at once.
     for row in list(session.ideal_ranking):
         db.delete(row)
     db.flush()
     db.expire(session, ["ideal_ranking"])
-    for position, judgement in enumerate(judgements, start=1):
+    identifiers = {j.bibcode: j.identifiers for j in session.judgements}
+    for position, (bibcode, grade) in enumerate(placed, start=1):
         session.ideal_ranking.append(
             IdealRanking(
                 position=position,
-                bibcode=judgement.bibcode,
-                identifiers=judgement.identifiers,
-                tie_group=judgement.rating,
-                ordered=judgement.rating in ordered_grades,
+                bibcode=bibcode,
+                identifiers=identifiers[bibcode],
+                tie_group=grade,
+                ordered=grade in ordered_grades,
             )
         )
     db.flush()

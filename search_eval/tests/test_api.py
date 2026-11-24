@@ -17,7 +17,8 @@ from search_eval.models import IdealRanking, Judgement, RatingSession, Run
 TOL = 1e-9
 
 # Baseline (production default) top 5: A B C D E.  Tweak qf=title^2: C A F D G.
-RATINGS = {"A": "3", "B": "0", "C": "2", "D": "1", "E": "skip", "F": "3", "G": "0"}
+# The rater's board: each group is a rating, in the rater's order. E can't be judged.
+BOARD = {3: ["A", "F"], 2: ["C"], 1: ["D"], 0: ["B", "G"]}
 NEED = "Measurements of Triton's surface pressure"
 PROD_WITH_TITLE_2 = (
     "abstract^0.7 ack^0.8 author^0.85 bibstem^0.8 first_author^0.9 "
@@ -30,13 +31,21 @@ def ready_to_rate(api, session_id=1):
     assert status == 200
 
 
-def rate(api, ratings, session_id=1, rater="Tester", **notes):
-    for bibcode, value in ratings.items():
-        body = {"bibcode": bibcode, "rating": value, "rater": rater}
-        if bibcode in notes:
-            body["note"] = notes[bibcode]
-        status, payload = api.put(f"/sessions/{session_id}/judgements", body)
-        assert status == 200, payload
+def board_body(groups, skipped=(), ordered=(), rater="Tester"):
+    return {
+        "rater": rater,
+        "groups": [
+            {"grade": g, "bibcodes": list(b), "ordered": g in ordered} for g, b in groups.items()
+        ],
+        "skipped": [{"bibcode": b, "note": n} for b, n in (skipped.items() if skipped else [])],
+    }
+
+
+def put_board(api, groups, skipped=None, ordered=(), session_id=1, expect=200, **kw):
+    status, payload = api.put(
+        f"/sessions/{session_id}/board", board_body(groups, skipped, ordered, **kw)
+    )
+    assert status == expect, payload
     return payload
 
 
@@ -49,7 +58,11 @@ def rated_session(api, search):
     search()
     api.post("/sessions/1/runs", {"qf": "title^2"})
     ready_to_rate(api)
-    return rate(api, RATINGS, E="outside my field")
+    return put_board(api, BOARD, {"E": "outside my field"})["session"]
+
+
+def groups_of(board):
+    return {g["grade"]: [r["bibcode"] for r in g["records"]] for g in board["groups"]}
 
 
 # --- health and config ------------------------------------------------------
@@ -186,73 +199,85 @@ def test_a_failed_tweak_is_kept_and_explained(search, api, adapters):
 # --- rating -----------------------------------------------------------------
 
 
-def test_the_pool_is_the_merged_union_and_hides_the_rankings(search, api):
+def test_the_board_starts_with_the_merged_pool_unsorted_and_blind(search, api):
     search()
     api.post("/sessions/1/runs", {"qf": "title^2"})
-    _, pool = api.get("/sessions/1/pool")
-    bibcodes = [r["bibcode"] for r in pool["records"]]
-    assert sorted(bibcodes) == list("ABCDEFG"), "A, C and D are in both rankings, rated once"
-    assert not {"rank", "environment", "move"} & set(pool["records"][0])
-    assert bibcodes != list("ABCDEFG") and bibcodes != list("CAFDGBE"), "neither order"
-    assert bibcodes == [r["bibcode"] for r in api.get("/sessions/1/pool")[1]["records"]]
+    _, board = api.get("/sessions/1/board")
+    unsorted = [r["bibcode"] for r in board["unsorted"]]
+    assert sorted(unsorted) == list("ABCDEFG"), "A, C and D are in both rankings, rated once"
+    assert not {"rank", "environment", "move"} & set(board["unsorted"][0])
+    assert unsorted != list("ABCDEFG") and unsorted != list("CAFDGBE"), "neither order"
+    assert unsorted == [r["bibcode"] for r in api.get("/sessions/1/board")[1]["unsorted"]]
+    assert [g["label"] for g in board["groups"]] == [
+        "Highly relevant",
+        "Relevant",
+        "Somewhat relevant",
+        "Not relevant",
+    ]
+    assert all(g["definition"] for g in board["groups"]), "the rubric travels with the board"
 
 
 def test_rating_needs_the_information_need_and_a_rater(search, api):
     search()
-    body = {"bibcode": "A", "rating": "3", "rater": "Tester"}
-    status, payload = api.put("/sessions/1/judgements", body)
-    assert status == 400 and "what you were looking for" in payload["error"]
+    payload = put_board(api, {3: ["A"]}, expect=400)
+    assert "what you were looking for" in payload["error"]
     ready_to_rate(api)
-    status, payload = api.put("/sessions/1/judgements", {**body, "rater": " "})
-    assert status == 400 and "who is rating" in payload["error"]
-    assert api.put("/sessions/1/judgements", body)[0] == 200
+    payload = put_board(api, {3: ["A"]}, rater=" ", expect=400)
+    assert "who is rating" in payload["error"]
+    put_board(api, {3: ["A"]})
 
 
-def test_each_rating_is_saved_on_its_own_and_a_skip_is_null(rated_session, app):
+def test_one_save_stores_ratings_and_ranking_together(rated_session, api, app):
     with app.app_context(), app.session_scope() as db:
         stored = {j.bibcode: (j.rating, j.note) for j in db.execute(select(Judgement)).scalars()}
+        rows = db.execute(select(IdealRanking).order_by(IdealRanking.position)).scalars()
+        ideal = [(r.bibcode, r.tie_group) for r in rows]
     assert stored["A"] == (3, None) and stored["B"] == (0, None)
     assert stored["E"] == (None, "outside my field"), "a skip is unjudged, not a 0"
+    assert ideal == [("A", 3), ("F", 3), ("C", 2), ("D", 1), ("B", 0), ("G", 0)]
     assert rated_session["counts"] == {"pool": 7, "rated": 6, "skipped": 1, "unrated": 0}
+
+
+def test_a_record_taken_off_the_board_is_unrated_again(rated_session, api):
+    payload = put_board(api, {3: ["F"], 2: ["C"], 1: ["D"], 0: ["B", "G"]}, {"E": None})
+    assert payload["session"]["counts"]["unrated"] == 1
+    assert [r["bibcode"] for r in payload["board"]["unsorted"]] == ["A"]
 
 
 @pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URI"), reason="row locks need Postgres, as in CI"
 )
-def test_ratings_sent_at_the_same_time_are_all_saved(search, api, app):
-    """Each rating rebuilds the ideal ranking. Without a lock on the session,
+def test_boards_sent_at_the_same_time_are_all_saved(search, api, app):
+    """Each save rewrites the ideal ranking. Without a lock on the session,
     two at once collided on its unique positions and answered 500."""
     search()
     api.post("/sessions/1/runs", {"qf": "title^2"})
     ready_to_rate(api)
+    boards = [{3: list("ABCDEFG")[: n + 1]} for n in range(7)]
 
-    def put(item):
-        bibcode, value = item
+    def put(groups):
         with app.test_client() as client:
-            body = {"bibcode": bibcode, "rating": value, "rater": "Tester"}
-            return client.put("/api/sessions/1/judgements", json=body).status_code
+            return client.put("/api/sessions/1/board", json=board_body(groups)).status_code
 
     with ThreadPoolExecutor(max_workers=7) as pool:
-        statuses = list(pool.map(put, RATINGS.items()))
+        statuses = list(pool.map(put, boards))
     assert statuses == [200] * 7
-    _, ideal = api.get("/sessions/1/ideal")
-    assert sum(len(b["records"]) for b in ideal["buckets"]) == 6
 
 
-def test_a_rating_can_be_cleared(rated_session, api):
-    payload = rate(api, {"A": None})
-    assert payload["counts"]["rated"] == 5 and payload["counts"]["unrated"] == 1
-
-
-def test_ratings_for_records_outside_the_session_are_refused(search, api, app):
+def test_records_outside_the_session_are_refused(search, api, app):
     """A judgement for a record no run returned would change IDCG invisibly."""
     search()
     ready_to_rate(api)
-    body = {"bibcode": "2024A&amp;A...682L..24S", "rating": "3", "rater": "Tester"}
-    status, _ = api.put("/sessions/1/judgements", body)
-    assert status == 400
+    put_board(api, {3: ["A", "2024A&amp;A...682L..24S"]}, expect=400)
     with app.app_context(), app.session_scope() as db:
-        assert db.execute(select(Judgement)).first() is None
+        assert db.execute(select(Judgement)).first() is None, "nothing from that board is kept"
+
+
+def test_a_record_cannot_be_in_two_groups(search, api):
+    search()
+    ready_to_rate(api)
+    payload = put_board(api, {3: ["A"], 0: ["A"]}, expect=400)
+    assert "two places" in payload["error"]
 
 
 # --- comparing --------------------------------------------------------------
@@ -295,19 +320,20 @@ def test_a_tweak_after_rating_counts_its_unrated_records(rated_session, api):
 # --- rating modes and duplicates --------------------------------------------
 
 
-def test_author_searches_store_thumbs_as_three_and_zero(search, api, app):
+def test_author_searches_have_two_groups_stored_as_three_and_zero(search, api, app):
     search(intent="author", query='author:"Elliot, J."')
     ready_to_rate(api)
-    payload = rate(api, {"A": "up", "B": "down", "C": "skip"})
-    assert (
-        api.put("/sessions/1/judgements", {"bibcode": "D", "rating": "3", "rater": "T"})[0] == 400
-    )
+    _, board = api.get("/sessions/1/board")
+    assert [(g["grade"], g["label"]) for g in board["groups"]] == [
+        (3, "Right person"),
+        (0, "Wrong person"),
+    ]
+    assert "not a rating group" in put_board(api, {2: ["D"]}, expect=400)["error"]
+    payload = put_board(api, {3: ["A"], 0: ["B"]}, {"C": None})
     with app.app_context(), app.session_scope() as db:
         stored = {j.bibcode: j.rating for j in db.execute(select(Judgement)).scalars()}
     assert stored == {"A": 3, "B": 0, "C": None}
-    assert column(payload, 0)["metrics"]["headline_label"] == "Precision@5"
-    ratings = {r["bibcode"]: r["rating"] for r in api.get("/sessions/1/pool")[1]["records"]}
-    assert ratings["A"] == "up" and ratings["B"] == "down"
+    assert column(payload["session"], 0)["metrics"]["headline_label"] == "Precision@5"
 
 
 def test_the_kind_of_search_is_fixed_once_something_is_rated(search, api):
@@ -315,7 +341,7 @@ def test_the_kind_of_search_is_fixed_once_something_is_rated(search, api):
     status, payload = api.patch("/sessions/1", {"intent": "author"})
     assert status == 200 and payload["rating_mode"] == "binary"
     api.patch("/sessions/1", {"intent": "topical", "information_need": NEED})
-    rate(api, {"A": "3"})
+    put_board(api, {3: ["A"]})
     status, payload = api.patch("/sessions/1", {"intent": "author"})
     assert status == 400 and "can't change" in payload["error"]
 
@@ -337,7 +363,7 @@ def test_a_preprint_and_its_published_version_are_rated_once(search, api, adapte
     ]
     search()
     api.post("/sessions/1/runs", {"qf": "title^2"})
-    assert len(api.get("/sessions/1/pool")[1]["records"]) == 5, "the shared DOI makes them one"
+    assert len(api.get("/sessions/1/board")[1]["unsorted"]) == 5, "the shared DOI makes them one"
 
 
 def test_titles_keep_sub_and_superscripts_and_lose_everything_else(search, api, adapters):
@@ -345,49 +371,41 @@ def test_titles_keep_sub_and_superscripts_and_lose_everything_else(search, api, 
         {"bibcode": "A", "title": "N<SUB>2</SUB> ice<script>alert(1)</script> <A href='x'>l</A>"},
     ]
     search()
-    title = api.get("/sessions/1/pool")[1]["records"][0]["title"]
+    title = api.get("/sessions/1/board")[1]["unsorted"][0]["title"]
     assert title == "N<sub>2</sub> ice l"
 
 
 # --- the ideal order --------------------------------------------------------
 
 
-def test_rated_records_are_grouped_by_grade_and_tied_until_ordered(rated_session, api):
-    _, ideal = api.get("/sessions/1/ideal")
-    groups = [
-        (b["grade"], [r["bibcode"] for r in b["records"]], b["ordered"]) for b in ideal["buckets"]
-    ]
-    assert groups == [
-        (3, ["A", "F"], False),
-        (2, ["C"], False),
-        (1, ["D"], False),
-        (0, ["B", "G"], False),
-    ]
-    assert [s["bibcode"] for s in ideal["skipped"]] == ["E"]
+def test_groups_are_tied_until_the_rater_orders_them(rated_session, api):
+    _, board = api.get("/sessions/1/board")
+    assert groups_of(board) == BOARD
+    assert [g["ordered"] for g in board["groups"]] == [False] * 4
+    assert [(r["bibcode"], r["note"]) for r in board["skipped"]] == [("E", "outside my field")]
 
 
-def test_reordering_within_a_grade_is_kept_and_marks_that_group(rated_session, api, app):
-    status, ideal = api.put("/sessions/1/ideal", {"order": list("FACDBG")})
-    assert status == 200
-    assert [r["bibcode"] for r in ideal["buckets"][0]["records"]] == ["F", "A"]
-    assert [b["ordered"] for b in ideal["buckets"]] == [True, False, False, False]
+def test_reordering_within_a_group_is_kept_and_marks_that_group(rated_session, api):
+    board = put_board(api, {**BOARD, 3: ["F", "A"]}, {"E": "outside my field"}, ordered={3})[
+        "board"
+    ]
+    assert groups_of(board)[3] == ["F", "A"]
+    assert [g["ordered"] for g in board["groups"]] == [True, False, False, False]
+
+
+def test_moving_a_record_to_another_group_changes_its_rating(rated_session, api, app):
+    payload = put_board(api, {3: ["A", "F", "G"], 2: ["C"], 1: ["D"], 0: ["B"]})
     with app.app_context(), app.session_scope() as db:
-        rows = db.execute(select(IdealRanking).order_by(IdealRanking.position)).scalars().all()
-        assert [r.bibcode for r in rows] == list("FACDBG")
+        g = db.execute(select(Judgement).where(Judgement.bibcode == "G")).scalar_one()
+        assert g.rating == 3
+    assert column(payload["session"], 1)["metrics"]["relevant_in_top_k"] == 4
 
 
-def test_a_record_cannot_be_dragged_above_a_higher_grade(rated_session, api):
-    status, payload = api.put("/sessions/1/ideal", {"order": list("AFDCBG")})
-    assert status == 400 and "Change its rating" in payload["error"]
-    assert api.put("/sessions/1/ideal", {"order": list("AFCDB")})[0] == 400, "G is missing"
-
-
-def test_a_regraded_record_joins_the_end_of_its_new_group(rated_session, api):
-    api.put("/sessions/1/ideal", {"order": list("FACDBG")})
-    rate(api, {"G": "3"})
-    _, ideal = api.get("/sessions/1/ideal")
-    assert [r["bibcode"] for r in ideal["buckets"][0]["records"]] == ["F", "A", "G"]
-    assert ideal["buckets"][0]["ordered"] is True
+def test_groups_are_stored_top_grade_first_whatever_order_they_arrive_in(rated_session, api, app):
+    put_board(api, {0: ["B", "G"], 1: ["D"], 2: ["C"], 3: ["A", "F"]})
+    with app.app_context(), app.session_scope() as db:
+        rows = db.execute(select(IdealRanking).order_by(IdealRanking.position)).scalars()
+        assert [r.tie_group for r in rows] == [3, 3, 2, 1, 0, 0]
 
 
 # --- serving the frontend ---------------------------------------------------

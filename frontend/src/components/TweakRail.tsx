@@ -226,7 +226,7 @@ export function TweakRail({ config, session, selectedId, onSelect }: Props) {
         Run tweak
       </Button>
       {tweaks.length > 0 && (
-        <TweakHistory tweaks={tweaks} selectedId={selectedId} onSelect={onSelect} />
+        <TweakHistory tweaks={tweaks} selectedId={selectedId} onSelect={onSelect} toSort={session.counts.unrated} />
       )}
     </Stack>
   );
@@ -252,7 +252,19 @@ const VERDICT: Record<string, { label: string; scheme: string }> = {
   same: { label: 'No change', scheme: 'gray' },
 };
 
-function TweakHistory({ tweaks, selectedId, onSelect }: { tweaks: Column[]; selectedId: number | null; onSelect: (id: number) => void }) {
+// Verdicts stay hidden while anything is left to sort, as in the summary, so
+// the history never hints at which ranking held a record still to be rated.
+function TweakHistory({
+  tweaks,
+  selectedId,
+  onSelect,
+  toSort,
+}: {
+  tweaks: Column[];
+  selectedId: number | null;
+  onSelect: (id: number) => void;
+  toSort: number;
+}) {
   const colors = useColorModeColors();
   return (
     <Box>
@@ -261,7 +273,7 @@ function TweakHistory({ tweaks, selectedId, onSelect }: { tweaks: Column[]; sele
       </Text>
       <Stack spacing={1} as="ol" listStyleType="none">
         {[...tweaks].reverse().map((t) => {
-          const verdict = t.metrics?.verdict ? VERDICT[t.metrics.verdict] : null;
+          const verdict = !toSort && t.metrics?.verdict ? VERDICT[t.metrics.verdict] : null;
           const isSelected = t.id === selectedId;
           return (
             <Box as="li" key={t.id}>
@@ -296,10 +308,10 @@ function TweakHistory({ tweaks, selectedId, onSelect }: { tweaks: Column[]; sele
                     </Badge>
                   ) : (
                     <Badge variant="outline" colorScheme="gray" textTransform="none">
-                      Not rated yet
+                      {toSort ? 'Sort to see' : 'Not rated yet'}
                     </Badge>
                   )}
-                  {t.metrics?.delta !== null && t.metrics?.delta !== undefined && (
+                  {verdict && t.metrics?.delta != null && (
                     <Text fontSize="xs" color="gray.600">
                       {signed(t.metrics.delta)} {t.metrics.headline_label}
                     </Text>

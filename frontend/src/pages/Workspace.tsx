@@ -1,42 +1,28 @@
-import {
-  Alert,
-  AlertIcon,
-  Badge,
-  Box,
-  Button,
-  Grid,
-  Skeleton,
-  Tab,
-  TabList,
-  TabPanel,
-  TabPanels,
-  Tabs,
-  Text,
-} from '@chakra-ui/react';
+import { ChevronLeftIcon, ChevronRightIcon } from '@chakra-ui/icons';
+import { Alert, AlertIcon, Box, Button, Flex, IconButton, Skeleton, Stack, Text } from '@chakra-ui/react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { api } from '../api';
-import { CompareView } from '../components/CompareView';
-import { OrderView } from '../components/OrderView';
-import { RateView } from '../components/RateView';
+import { CompactComparison, SummaryStrip } from '../components/CompareView';
 import { SearchBar } from '../components/SearchBar';
+import { SortBoard } from '../components/SortBoard';
 import { TweakRail } from '../components/TweakRail';
+import { useStoredValue } from '../prefs';
 import { useConfig } from '../useConfig';
 import { useStartSearch } from './Home';
 
-const VIEWS = ['compare', 'rate', 'order'] as const;
-
-// One page per search: tweak controls on the left, and the comparison, the
-// blind rating list and the ideal order as views of the same session.
+// One screen per search. The tweak rail sits on the left and folds away to
+// the side. The main area is one task, sorting records into rating groups;
+// the comparison is inferred from that sorting.
 export function Workspace() {
   const id = Number(useParams().id);
   const { data: config } = useConfig();
   const { data: session, error, isLoading } = useQuery(['session', id], () => api.session(id));
-  const [params, setParams] = useSearchParams();
-  const view = Math.max(0, VIEWS.indexOf((params.get('view') as (typeof VIEWS)[number]) ?? 'compare'));
-  const setView = (index: number) => setParams({ view: VIEWS[index] }, { replace: true });
+  // Refetch the board only when a run is added, i.e. when new records arrive.
+  const { data: board } = useQuery(['board', id, session?.columns.length], () => api.board(id), { enabled: !!session });
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [rail, setRail] = useStoredValue('search-eval:rail', 'open');
   const start = useStartSearch();
 
   // Show the newest tweak until the person picks another.
@@ -57,7 +43,9 @@ export function Workspace() {
   if (isLoading || !session || !config) return <Skeleton height="30rem" mt={6} />;
 
   const baseline = session.columns[0];
+  const tweak = session.columns.find((c) => c.id === selectedId && !c.is_baseline);
   const discipline = config.disciplines.find((d) => d.value === session.discipline)?.label;
+  const railOpen = rail !== 'closed';
 
   return (
     <Box mt={4}>
@@ -83,39 +71,34 @@ export function Workspace() {
           {start.error.message}
         </Alert>
       )}
-      <Grid templateColumns={{ base: '1fr', lg: '300px 1fr' }} gap={6} mt={6} alignItems="start">
-        <Box as="aside" aria-label="Tweak the search" order={{ base: 2, lg: 1 }}>
-          <TweakRail config={config} session={session} selectedId={selectedId} onSelect={setSelectedId} />
-        </Box>
-        <Tabs index={view} onChange={setView} isLazy minW={0} order={{ base: 1, lg: 2 }}>
-          <TabList>
-            <Tab>Compare</Tab>
-            <Tab>
-              Rate
-              {session.counts.unrated > 0 && (
-                <Badge ml={2} colorScheme="blue" variant="solid" borderRadius="full" aria-label={`${session.counts.unrated} to rate`}>
-                  {session.counts.unrated}
-                </Badge>
-              )}
-            </Tab>
-            <Tab>Order</Tab>
-          </TabList>
-          <TabPanels>
-            <TabPanel px={0}>
-              <CompareView session={session} selectedId={selectedId} onRate={() => setView(1)} />
-            </TabPanel>
-            <TabPanel px={0}>
-              <RateView session={session} onDone={() => setView(0)} />
-            </TabPanel>
-            <TabPanel px={0}>
-              <OrderView session={session} />
-              <Button mt={6} size="sm" variant="outline" onClick={() => setView(0)}>
-                Back to compare
-              </Button>
-            </TabPanel>
-          </TabPanels>
-        </Tabs>
-      </Grid>
+      <Flex gap={5} mt={5} align="start" direction={{ base: 'column', lg: 'row' }}>
+        {railOpen ? (
+          <Box as="aside" aria-label="Tweak the search" w={{ base: 'full', lg: '300px' }} flexShrink={0} order={{ base: 2, lg: 1 }}>
+            <Button size="xs" variant="ghost" leftIcon={<ChevronLeftIcon />} onClick={() => setRail('closed')} mb={1}>
+              Hide tweaks
+            </Button>
+            <TweakRail config={config} session={session} selectedId={selectedId} onSelect={setSelectedId} />
+          </Box>
+        ) : (
+          <IconButton
+            aria-label="Show tweaks"
+            title="Show tweaks"
+            icon={<ChevronRightIcon />}
+            variant="outline"
+            size="sm"
+            onClick={() => setRail('open')}
+            flexShrink={0}
+          />
+        )}
+        <Stack spacing={4} flex="1" minW={0} w="full" order={{ base: 1, lg: 2 }}>
+          <SummaryStrip session={session} tweak={tweak} />
+          {board ? (
+            <SortBoard session={session} board={board} whenSorted={<CompactComparison session={session} tweak={tweak} />} />
+          ) : (
+            <Skeleton height="20rem" />
+          )}
+        </Stack>
+      </Flex>
     </Box>
   );
 }

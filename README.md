@@ -18,13 +18,15 @@ Works today:
 - **Tweak from the results.** Field weights start at production's own values. Change one,
   add a boost or pick another environment, and the tweak appears next to production with
   what changed, which records moved, which are new and which dropped out.
-- **Rate blind, on the same page.** The Rate view merges every ranking's top records into
-  one shuffled list with no rank or column. Each rating saves as soon as it is made, with
-  keyboard shortcuts (j/k, 0–3, s). Author searches are rated right or wrong person. A skip
-  is stored as unjudged and never scored as 0.
-- **Order within a grade.** Drag rated records, or use the keyboard, to put the most useful
-  first within each rating. A record can't be dragged above a higher grade; changing its
-  rating moves it across.
+- **Rate and rank in one step, on the same screen.** Each record is read once, in a blind,
+  shuffled "To sort" list with no rank or column, and dragged into a rating group (or sent
+  with a number key, or 👎 to the bottom). Its group is its rating and its place in the
+  group is its rank, so the ranking can never contradict the ratings. The whole board saves
+  on every move. Author searches have two groups, right and wrong person. A skip is stored
+  as unjudged and never scored as 0.
+- **The comparison is inferred, not asked for.** Once nothing is left to sort, production
+  and the tweak appear side by side as compact rows carrying the grades already given, with
+  rank moves and what dropped out. Verdicts stay hidden while records remain to sort.
 - **Metrics stored per run:** NDCG@10 against one shared pool, how many of the top 10 are
   rated, the range NDCG could still take, P@10, success@10 for known items, overlap and RBO.
   The comparison leads with a verdict (better, worse, no change) and the reason.

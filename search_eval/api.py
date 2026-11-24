@@ -75,37 +75,20 @@ def add_run(session_id):
         return jsonify(presenters.session_payload(session, current_app.config)), 201
 
 
-@bp.get("/sessions/<int:session_id>/pool")
-def get_pool(session_id):
+@bp.get("/sessions/<int:session_id>/board")
+def get_board(session_id):
     with current_app.session_scope() as db:
         session = service.get_session(db, session_id)
-        return jsonify(presenters.pool_payload(session, current_app.config))
+        return jsonify(presenters.board_payload(session, current_app.config))
 
 
-@bp.put("/sessions/<int:session_id>/judgements")
-def put_judgement(session_id):
-    """One rating, saved as soon as it is made. {"bibcode", "rating", "note",
-    "rater"}; a null rating clears it."""
+@bp.put("/sessions/<int:session_id>/board")
+def put_board(session_id):
+    """Ratings and ranking in one step: the whole board on every move."""
     with current_app.session_scope() as db:
         session = service.get_session(db, session_id, lock=True)
-        service.save_judgement(db, session, _body(), current_app.config)
-        return jsonify(presenters.session_payload(session, current_app.config))
-
-
-@bp.get("/sessions/<int:session_id>/ideal")
-def get_ideal(session_id):
-    with current_app.session_scope() as db:
-        session = service.get_session(db, session_id)
-        return jsonify(presenters.ideal_payload(session))
-
-
-@bp.put("/sessions/<int:session_id>/ideal")
-def put_ideal(session_id):
-    """The rater's order of rated records: {"order": [bibcode, ...]}."""
-    order = _body().get("order")
-    if not isinstance(order, list) or not all(isinstance(b, str) for b in order):
-        raise service.SessionError("order must be a list of bibcodes.")
-    with current_app.session_scope() as db:
-        session = service.get_session(db, session_id, lock=True)
-        service.set_ideal_order(db, session, order)
-        return jsonify(presenters.ideal_payload(session))
+        service.save_board(db, session, _body(), current_app.config)
+        return jsonify(
+            session=presenters.session_payload(session, current_app.config),
+            board=presenters.board_payload(session, current_app.config),
+        )

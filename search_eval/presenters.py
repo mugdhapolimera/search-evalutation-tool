@@ -10,7 +10,7 @@ import nh3
 from .boost import parse_qf
 from .rubric import rubric_for
 from .scoring.metrics import metric_name
-from .service import RATING_VALUES, canonical_map, latest_metrics, ok_runs, rating_pool
+from .service import GRADES, canonical_map, latest_metrics, ok_runs, rating_pool
 
 # ADS titles and abstracts carry a little HTML (sub/superscripts, italics, line
 # breaks). Keep that, drop everything else, so the page renders N<sub>2</sub>
@@ -267,71 +267,57 @@ def _verdict(delta):
     return "same"
 
 
-def pool_payload(session, config):
-    """The blind rating list: no ranks, no environments, no column."""
+def board_payload(session, config):
+    """The Rate & rank board: what is still to sort, blind, and the rating
+    groups in the rater's order. No ranks, environments or columns appear, so
+    nobody grades toward the system they expect to win (synthesis R3)."""
     runs = ok_runs(session)
     canonical_of = canonical_map(runs)
-    judgements = {canonical_of.get(j.bibcode, j.bibcode): j for j in session.judgements}
-    # A stored 3 is shown back as "up" in binary mode and as "3" in graded mode.
-    values = {stored: raw for raw, stored in RATING_VALUES[session.rating_mode].items()}
-    records = []
-    for result in rating_pool(session, config["RATE_DEPTH"]):
-        judgement = judgements.get(canonical_of.get(result.bibcode, result.bibcode))
-        records.append(
-            {
-                "bibcode": result.bibcode,
-                "title": clean_html(result.title),
-                "authors": _authors(result.authors),
-                "year": result.year,
-                "pub": result.pub,
-                "doctype": result.doctype,
-                "abstract": clean_html(result.abstract),
-                "rating": None if judgement is None else values[judgement.rating],
-                "note": None if judgement is None else judgement.note,
-            }
-        )
+    record_of = {r.bibcode: r for run in session.runs for r in run.results}
+    judged = {canonical_of.get(j.bibcode, j.bibcode) for j in session.judgements}
+    options = rubric_for(session.rubric_version, session.rating_mode)
+    option_for = dict(zip(GRADES[session.rating_mode], options))
+
+    def record(bibcode, **extra):
+        r = record_of[bibcode]
+        return {
+            "bibcode": bibcode,
+            "title": clean_html(r.title),
+            "authors": _authors(r.authors),
+            "year": r.year,
+            "pub": r.pub,
+            "abstract": clean_html(r.abstract),
+            **extra,
+        }
+
+    in_group = {g: [] for g in GRADES[session.rating_mode]}
+    ordered = set()
+    for row in session.ideal_ranking:
+        in_group[row.tie_group].append(record(row.bibcode))
+        if row.ordered:
+            ordered.add(row.tie_group)
     return {
         "information_need": session.information_need,
         "rating_mode": session.rating_mode,
-        "options": rubric_for(session.rubric_version, session.rating_mode),
-        "records": records,
-    }
-
-
-def ideal_payload(session):
-    """Rated records grouped by grade, in the rater's order, plus skips."""
-    titles = {r.bibcode: r for run in session.runs for r in run.results}
-    labels = {o["value"]: o["label"] for o in rubric_for(session.rubric_version, "graded")}
-    if session.rating_mode == "binary":
-        labels = {"3": "Right person", "0": "Wrong person"}
-    buckets = {}
-    for row in session.ideal_ranking:
-        bucket = buckets.setdefault(
-            row.tie_group,
+        "groups": [
             {
-                "grade": row.tie_group,
-                "label": labels.get(str(row.tie_group), ""),
-                "ordered": row.ordered,
-                "records": [],
-            },
-        )
-        record = titles.get(row.bibcode)
-        bucket["records"].append(
-            {
-                "bibcode": row.bibcode,
-                "title": clean_html(record.title) if record else row.bibcode,
-                "year": record.year if record else None,
-                "pub": record.pub if record else None,
+                "grade": grade,
+                "label": option_for[grade]["label"],
+                "definition": option_for[grade]["definition"],
+                "ordered": grade in ordered,
+                "records": in_group[grade],
             }
-        )
-    skipped = [
-        {"bibcode": j.bibcode, "title": clean_html(titles[j.bibcode].title), "note": j.note}
-        for j in session.judgements
-        if j.rating is None and j.bibcode in titles
-    ]
-    return {
-        "buckets": [buckets[g] for g in sorted(buckets, reverse=True)],
-        "skipped": skipped,
+            for grade in GRADES[session.rating_mode]
+        ],
+        "skip": {k: options[-1][k] for k in ("label", "definition")},
+        "skipped": [
+            record(j.bibcode, note=j.note) for j in session.judgements if j.rating is None
+        ],
+        "unsorted": [
+            record(r.bibcode)
+            for r in rating_pool(session, config["RATE_DEPTH"])
+            if canonical_of.get(r.bibcode, r.bibcode) not in judged
+        ],
     }
 
 
