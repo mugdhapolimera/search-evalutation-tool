@@ -59,7 +59,12 @@ RANKINGS = {
 
 @pytest.fixture
 def adapters():
-    return {"prod": FakeAdapter("prod", RANKINGS), "dev": FakeAdapter("dev", RANKINGS)}
+    # Each adapter gets its own copy, so a test that changes one ranking never
+    # leaks into the next test.
+    return {
+        "prod": FakeAdapter("prod", dict(RANKINGS)),
+        "dev": FakeAdapter("dev", dict(RANKINGS)),
+    }
 
 
 @pytest.fixture
@@ -90,23 +95,35 @@ def client(app):
 
 
 @pytest.fixture
-def new_session(client):
-    """Start a topical session comparing default ranking with qf=title^2."""
+def api(client):
+    """JSON helpers: api.post(path, body) and so on, returning (status, json)."""
+
+    class Api:
+        def _call(self, method, path, body=None):
+            resp = getattr(client, method)(f"/api{path}", json=body)
+            return resp.status_code, resp.get_json()
+
+        def get(self, path):
+            return self._call("get", path)
+
+        def post(self, path, body=None):
+            return self._call("post", path, body or {})
+
+        def put(self, path, body=None):
+            return self._call("put", path, body or {})
+
+        def patch(self, path, body=None):
+            return self._call("patch", path, body or {})
+
+    return Api()
+
+
+@pytest.fixture
+def search(api):
+    """Search like a person does: only the query, plus anything overridden."""
 
     def start(**overrides):
-        form = {
-            "rater": "Tester",
-            "query": "triton atmosphere",
-            "information_need": "Measurements of Triton's surface pressure",
-            "goal": "check a release",
-            "discipline": "planetary science",
-            "intent": "topical",
-            "env_a": "prod",
-            "env_b": "prod",
-            "a_qf": "",
-            "b_qf": "title^2",
-        }
-        form.update(overrides)
-        return client.post("/sessions", data=form)
+        body = {"query": "triton atmosphere", **overrides}
+        return api.post("/sessions", body)
 
     return start

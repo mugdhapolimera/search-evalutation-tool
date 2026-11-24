@@ -9,26 +9,36 @@ server and stored with the run, the exact parameters sent, and how it was comput
 
 Design: the RFC *Design and Plan for new Search Evaluation Tool* (Jira PT-23).
 
-## Status: v0.1 scaffold
+## Status: v0.1
 
 Works today:
 
-- Two-column sessions on any configured environment, through each environment's full API
-  stack, never raw Solr.
-- A blinded, merged, deduplicated rating pool. A preprint and its published version are
-  rated once.
-- 0–3 ratings for topical and known-item searches, right/wrong person for author searches,
-  and Skip. A skip is stored as unjudged and never scored as 0.
-- Metrics stored per run: NDCG@10 against one shared pool, judged@10, the range NDCG
-  could still take given the unrated records, P@10, success@10 for known items, overlap@10
-  and RBO between runs.
-- The tuning loop: add a variant, rate only what it newly brought in, compare.
+- **Search first.** Type a query as you would on SciX. Production's default ranking runs at
+  once and is always the baseline, so there is nothing to set up.
+- **Tweak from the results.** Field weights start at production's own values. Change one,
+  add a boost or pick another environment, and the tweak appears next to production with
+  what changed, which records moved, which are new and which dropped out.
+- **Rate blind, on the same page.** The Rate view merges every ranking's top records into
+  one shuffled list with no rank or column. Each rating saves as soon as it is made, with
+  keyboard shortcuts (j/k, 0–3, s). Author searches are rated right or wrong person. A skip
+  is stored as unjudged and never scored as 0.
+- **Order within a grade.** Drag rated records, or use the keyboard, to put the most useful
+  first within each rating. A record can't be dragged above a higher grade; changing its
+  rating moves it across.
+- **Metrics stored per run:** NDCG@10 against one shared pool, how many of the top 10 are
+  rated, the range NDCG could still take, P@10, success@10 for known items, overlap and RBO.
+  The comparison leads with a verdict (better, worse, no change) and the reason.
+- **Looks like SciX.** The frontend is React and Chakra UI with SciX's own theme, nav bar,
+  discipline choices and result layout, copied from
+  [nectar](https://github.com/adsabs/nectar) (see `frontend/src/scix/`).
 
 Not yet:
 
-- Login through SciX accounts with a dedicated scope.
-- The BeeHive image and manifests, to be modelled on ADSScanExplorerService.
-- An order within a grade bucket (drag to rank).
+- Login through SciX accounts with a dedicated scope. Until then the rater's name is asked
+  once and kept in the browser.
+- The BeeHive image and manifests, to be modelled on ADSScanExplorerService. The image
+  needs a Node build stage for the frontend.
+- Affiliations and ORCID for judging author searches.
 - Google Scholar.
 - Frozen regression sets.
 
@@ -62,7 +72,7 @@ through this parameter. This is open with the API owners.
 
 ## Running it locally
 
-Needs Python 3.12 and Postgres.
+Needs Python 3.12, Node 22 and Postgres.
 
 ```bash
 docker compose up -d db            # or any Postgres you already run
@@ -71,8 +81,14 @@ pip install -e '.[dev]'
 export ADS_TOKEN_PROD=...          # your SciX/ADS API token
 export SQLALCHEMY_DATABASE_URI=postgresql+psycopg2://search_eval:search_eval@localhost:5432/search_eval
 alembic upgrade head
-python wsgi.py                     # http://localhost:8181
+python wsgi.py                     # the API, on http://localhost:8181
+
+cd frontend && npm ci
+npm run dev                        # the page, on http://localhost:5173 (proxies /api to 8181)
 ```
+
+`npm run build` writes the frontend into `search_eval/frontend_dist/`, after which Flask
+serves the page and the API together on port 8181, as the deployed image will.
 
 The development API rejects production tokens, so the dev environment needs its own
 `ADS_TOKEN_DEV`. Until you have one, run both columns on production and put the change
@@ -87,6 +103,8 @@ variable of the same name. Secrets belong in the environment only; `local_config
 | Key | Default | What it decides |
 | --- | --- | --- |
 | `ENVIRONMENTS` | prod, dev | Each environment's API base URL and the config key holding its token |
+| `BASELINE_ENVIRONMENT` | prod | Where the baseline (production's default ranking) runs for every search |
+| `DISCIPLINES` | SciX's six | Discipline choices, with SciX's values and labels |
 | `ROWS_RETRIEVED` | 30 | Records retrieved per run |
 | `SCORE_K` | 10 | Depth metrics are computed at |
 | `RATE_DEPTH` | 10 | How deep into each run the rating pool reaches |
@@ -104,10 +122,12 @@ literature review), so they are configuration rather than code.
 pytest                                     # SQLite, no setup
 TEST_DATABASE_URI=postgresql+psycopg2://... pytest   # against Postgres, as CI does
 pip install -e '.[oracle]' && pytest       # also checks NDCG against ir_measures
+cd frontend && npm test                    # the page: comparison wording, rating saves
 ```
 
 The scoring module is stdlib only, so the image carries no numpy or scipy. `ir_measures`
-is a test-time oracle, not a runtime dependency.
+is a test-time oracle, not a runtime dependency. One test sends ratings concurrently and
+only runs on Postgres, because it needs row locks.
 
 ## Layout
 
@@ -116,15 +136,20 @@ config.py                 defaults; overridden by environment variables
 wsgi.py                   gunicorn entry point (wsgi:application)
 alembic/                  migrations
 search_eval/
-  app.py                  ADSFlask app factory
+  app.py                  ADSFlask app factory; serves the built frontend
+  api.py                  JSON API under /api
+  presenters.py           stored rows turned into what the screens show
+  service.py              the experiment loop
   adapters.py             one adapter per environment, same interface
   boost.py                qf/boost validation, canonical form, config hash
   models.py               sessions, runs, judgements, ideal ranking, metrics
-  service.py              the experiment loop
   scoring/metrics.py      NDCG, bounds, compatibility, RBO, P@k, success@k
   rubric.py               rating rubric, versioned
-  views.py, templates/    server-rendered pages
   tests/
+frontend/
+  src/scix/               SciX's theme, select, colours and logo, copied from nectar
+  src/components/         search bar, tweak rail, compare, rate, order
+  src/pages/              home and the per-search workspace
 ```
 
 Built on [adsmutils](https://github.com/adsabs/ADSMicroserviceUtils), which pins

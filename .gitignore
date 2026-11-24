@@ -22,3 +22,10 @@ local_config.py
 
 # Claude Code local state.
 .claude/
+
+# Frontend dependencies and build output (built in CI and in the image).
+frontend/node_modules/
+search_eval/frontend_dist/
+
+# adsmutils writes its log here.
+logs/

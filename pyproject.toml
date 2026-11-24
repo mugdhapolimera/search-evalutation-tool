@@ -21,6 +21,7 @@ dependencies = [
     "Jinja2==3.1.6",
     "markupsafe==3.0.3",
     "werkzeug==2.3.8",
+    "nh3==0.3.1",
     "psycopg2-binary==2.9.12",
     "requests>=2.31,<3",
 ]
@@ -53,7 +54,7 @@ include = ["search_eval*"]
 exclude = ["search_eval.tests*"]
 
 [tool.setuptools.package-data]
-search_eval = ["templates/*.html", "static/*"]
+search_eval = ["frontend_dist/*", "frontend_dist/assets/*"]
 
 [tool.pytest.ini_options]
 addopts = "-v -Wdefault --cov=search_eval --cov-report=term-missing"

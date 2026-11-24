@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -48,9 +49,12 @@ class RatingSession(Base):
     __tablename__ = "session"
 
     id = Column(Integer, primary_key=True)
-    rater = Column(String(255), nullable=False)
+    # Who ran the search. Optional: searching never asks for a name. Each
+    # judgement carries its own rater.
+    rater = Column(String(255))
     query = Column(Text, nullable=False)
-    information_need = Column(Text, nullable=False)
+    # Required before the first rating, not before searching.
+    information_need = Column(Text)
     goal = Column(Text)
     discipline = Column(String(255))
     intent = Column(String(32), nullable=False, default="topical")
@@ -182,6 +186,9 @@ class IdealRanking(Base):
     bibcode = Column(String(64), nullable=False)
     identifiers = Column(JSON, nullable=False, default=list)
     tie_group = Column(Integer, nullable=False)
+    # True when the rater put this grade bucket in an order of their own. When
+    # False, records in the bucket are tied and `position` is only storage order.
+    ordered = Column(Boolean, nullable=False, default=False)
 
     session = relationship("RatingSession", back_populates="ideal_ranking")
 

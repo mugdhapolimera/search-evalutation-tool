@@ -34,10 +34,22 @@ ADS_TOKEN_PROD = ""
 ADS_TOKEN_DEV = ""
 ADS_REQUEST_TIMEOUT = 30
 
-# The two columns a new session compares. Until a devapi token exists, both
-# point at production and the second one carries different qf or boost.
-DEFAULT_ENVIRONMENT_A = "prod"
-DEFAULT_ENVIRONMENT_B = "prod"
+# Every search runs production's default ranking first: it is the baseline every
+# tweak is compared against, so nobody has to set it up. Tweaks default to the
+# same environment until a devapi token exists.
+BASELINE_ENVIRONMENT = "prod"
+DEFAULT_VARIANT_ENVIRONMENT = "prod"
+
+# SciX's discipline choices, in SciX's order and with its labels
+# (nectar src/components/NavBar/models.ts). Stored as the value.
+DISCIPLINES = [
+    ("general", "No preferred discipline"),
+    ("astrophysics", "Astrophysics"),
+    ("heliophysics", "Heliophysics"),
+    ("planetary", "Planetary Science"),
+    ("earth", "Earth Science"),
+    ("biophysical", "Biological & Physical Science"),
+]
 
 # Retrieve 20 to 30 per environment, score @10 (RFC, 4 Nov meeting).
 ROWS_RETRIEVED = 30
