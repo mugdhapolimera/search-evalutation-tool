@@ -1,36 +1,22 @@
 import {
-  Alert,
-  AlertDescription,
-  AlertIcon,
   Badge,
   Box,
   Button,
   Collapse,
   Flex,
-  Grid,
-  Heading,
-  HStack,
-  Link,
   SimpleGrid,
-  Stack,
-  Tag,
   Text,
   useDisclosure,
-  Wrap,
 } from '@chakra-ui/react';
-import { useState } from 'react';
 import { Column, Session } from '../api';
 import { fmt, plural, signed } from '../format';
 import { useColorModeColors } from '../scix/useColorModeColors';
-import { GradeChip } from './GradeChip';
-import { MoveTag } from './MoveTag';
 
 const VERDICT_TEXT = { better: 'Better', worse: 'Worse', same: 'No change' } as const;
 const VERDICT_SCHEME = { better: 'green', worse: 'red', same: 'gray' } as const;
 
-// One line that answers "is this tweak better?". While records are still to
-// sort it shows only that, so nobody sees which ranking held which record
-// before they have rated it.
+// One line that answers "is this tweak better?". While records are still
+// unrated it says only that: a verdict on part of the ratings misleads.
 export function SummaryStrip({ session, tweak }: { session: Session; tweak: Column | undefined }) {
   const details = useDisclosure();
   const colors = useColorModeColors();
@@ -45,8 +31,8 @@ export function SummaryStrip({ session, tweak }: { session: Session; tweak: Colu
   if (unrated > 0) {
     return box(
       <Text>
-        <b>{plural(unrated, 'record')} to sort.</b> The comparison is worked out from your sorting and appears when
-        nothing is left.
+        <b>{plural(unrated, 'record')} to rate.</b> The verdict appears once every record is rated, so it never
+        rests on half the ratings.
       </Text>,
     );
   }
@@ -133,118 +119,3 @@ function Figure({ label, value }: { label: string; value: string }) {
   );
 }
 
-// Production next to the selected tweak, as compact rows: every record here
-// has already been read and sorted, so only the title, the rater's grade and
-// the rank change are shown.
-export function CompactComparison({ session, tweak }: { session: Session; tweak: Column | undefined }) {
-  const baseline = session.columns[0];
-  return (
-    <Box>
-      <Heading as="h2" size="md" mb={3}>
-        How the rankings compare
-      </Heading>
-      <Grid templateColumns={{ base: '1fr', md: tweak ? '1fr 1fr' : '1fr' }} gap={4} alignItems="start">
-        <RankingColumn session={session} column={baseline} title="Production" />
-        {tweak && <RankingColumn session={session} column={tweak} title="Tweak" />}
-      </Grid>
-    </Box>
-  );
-}
-
-function RankingColumn({ session, column, title }: { session: Session; column: Column; title: string }) {
-  const [showAll, setShowAll] = useState(false);
-  const k = session.k;
-  const rows = showAll ? column.results : column.results.slice(0, k);
-  return (
-    <Box as="section" aria-label={title} minW={0}>
-      <Stack spacing={1} mb={2}>
-        <HStack justify="space-between" align="baseline">
-          <Heading as="h3" size="sm">
-            {title}
-          </Heading>
-          {column.metrics?.headline != null && (
-            <Text fontSize="sm">
-              {column.metrics.headline_label} <b>{fmt(column.metrics.headline)}</b>
-            </Text>
-          )}
-        </HStack>
-        {column.is_baseline ? (
-          <Text fontSize="xs" color="gray.600">
-            {column.environment_label} default
-            {column.num_found !== null && ` · ${column.num_found.toLocaleString()} results`}
-          </Text>
-        ) : (
-          <Wrap spacing={1}>
-            {column.changes.map((c) => (
-              <Tag key={c} size="sm" variant="subtle" colorScheme="blue">
-                {c}
-              </Tag>
-            ))}
-            {column.num_found !== null && (
-              <Text fontSize="xs" color="gray.600" alignSelf="center">
-                {column.num_found.toLocaleString()} results
-              </Text>
-            )}
-          </Wrap>
-        )}
-        {column.warnings.map((w) => (
-          <Alert key={w} status="warning" fontSize="xs" py={1} borderRadius="md">
-            <AlertIcon boxSize={3} />
-            {w}
-          </Alert>
-        ))}
-      </Stack>
-      {column.status === 'error' ? (
-        <Alert status="error" borderRadius="md">
-          <AlertIcon />
-          <AlertDescription>{column.error}</AlertDescription>
-        </Alert>
-      ) : (
-        <>
-          <Stack as="ol" spacing={1} listStyleType="none">
-            {rows.map((r) => (
-              <Flex as="li" key={r.bibcode} align="center" gap={2} fontSize="sm" bg="gray.50" borderRadius="sm" px={2} py={1}>
-                <Text color="gray.600" minW="1.25rem" textAlign="right">
-                  {r.rank}
-                </Text>
-                <GradeChip grade={r.grade} mode={session.rating_mode} short />
-                <Link
-                  href={`https://scixplorer.org/abs/${encodeURIComponent(r.bibcode)}/abstract`}
-                  isExternal
-                  noOfLines={1}
-                  flex="1"
-                  minW={0}
-                  dangerouslySetInnerHTML={{ __html: r.title ?? r.bibcode }}
-                />
-                {!column.is_baseline && <MoveTag move={r.move} />}
-              </Flex>
-            ))}
-          </Stack>
-          {column.results.length > k && (
-            <Button size="xs" variant="link" onClick={() => setShowAll(!showAll)} mt={1}>
-              {showAll ? `Show top ${k} only` : `Show all ${column.results.length}`}
-            </Button>
-          )}
-          {column.dropped.length > 0 && (
-            <Box mt={3}>
-              <Text fontWeight="semibold" fontSize="sm" mb={1}>
-                Dropped out of the top {k}
-              </Text>
-              <Stack as="ul" listStyleType="none" spacing={1} fontSize="sm">
-                {column.dropped.map((d) => (
-                  <HStack as="li" key={d.bibcode} spacing={2} align="center">
-                    <Text color="gray.600" minW="3.5rem">
-                      was {d.was}
-                    </Text>
-                    <GradeChip grade={d.grade} mode={session.rating_mode} short />
-                    <Text noOfLines={1} dangerouslySetInnerHTML={{ __html: d.title ?? d.bibcode }} />
-                  </HStack>
-                ))}
-              </Stack>
-            </Box>
-          )}
-        </>
-      )}
-    </Box>
-  );
-}

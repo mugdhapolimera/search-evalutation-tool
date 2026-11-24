@@ -252,8 +252,8 @@ const VERDICT: Record<string, { label: string; scheme: string }> = {
   same: { label: 'No change', scheme: 'gray' },
 };
 
-// Verdicts stay hidden while anything is left to sort, as in the summary, so
-// the history never hints at which ranking held a record still to be rated.
+// Verdicts stay hidden while anything is unrated, as in the summary: a
+// verdict on part of the ratings misleads.
 function TweakHistory({
   tweaks,
   selectedId,

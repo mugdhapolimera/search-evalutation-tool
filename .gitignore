@@ -29,3 +29,4 @@ search_eval/frontend_dist/
 
 # adsmutils writes its log here.
 logs/
+frontend/*.tsbuildinfo

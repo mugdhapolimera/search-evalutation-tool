@@ -4,17 +4,17 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api';
-import { CompactComparison, SummaryStrip } from '../components/CompareView';
+import { SummaryStrip } from '../components/CompareView';
 import { SearchBar } from '../components/SearchBar';
-import { SortBoard } from '../components/SortBoard';
+import { RatingBoard } from '../components/RatingBoard';
 import { TweakRail } from '../components/TweakRail';
 import { useStoredValue } from '../prefs';
 import { useConfig } from '../useConfig';
 import { useStartSearch } from './Home';
 
 // One screen per search. The tweak rail sits on the left and folds away to
-// the side. The main area is one task, sorting records into rating groups;
-// the comparison is inferred from that sorting.
+// the side. The main area compares, rates and ranks in one pass: each
+// engine's results side by side, with the rating groups beside them.
 export function Workspace() {
   const id = Number(useParams().id);
   const { data: config } = useConfig();
@@ -93,7 +93,7 @@ export function Workspace() {
         <Stack spacing={4} flex="1" minW={0} w="full" order={{ base: 1, lg: 2 }}>
           <SummaryStrip session={session} tweak={tweak} />
           {board ? (
-            <SortBoard session={session} board={board} whenSorted={<CompactComparison session={session} tweak={tweak} />} />
+            <RatingBoard session={session} board={board} tweak={tweak} />
           ) : (
             <Skeleton height="20rem" />
           )}
