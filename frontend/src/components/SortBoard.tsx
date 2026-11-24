@@ -1,16 +1,16 @@
-import { CloseIcon, DragHandleIcon } from '@chakra-ui/icons';
+import { CloseIcon } from '@chakra-ui/icons';
 import {
   Alert,
   AlertIcon,
   Badge,
   Box,
   Button,
+  ButtonGroup,
+  Checkbox,
   Flex,
   FormControl,
   FormHelperText,
   FormLabel,
-  Grid,
-  Heading,
   HStack,
   IconButton,
   Input,
@@ -41,8 +41,6 @@ import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { api, Board, BoardRecord, Session } from '../api';
 import { plural } from '../format';
 import { useRater, useStoredValue } from '../prefs';
-import { useColorModeColors } from '../scix/useColorModeColors';
-import { ResultItem } from './ResultItem';
 
 // One task: sort each record once. Its group is its rating and its place in
 // the group is its rank, so one move records both (4 Nov decision: rate and
@@ -91,9 +89,17 @@ function BoardInner({ session, board, rater, whenSorted }: Props & { rater: stri
     Object.fromEntries(board.skipped.map((r) => [r.bibcode, r.note ?? ''])),
   );
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const toggle = (bibcode: string) =>
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(bibcode)) next.delete(bibcode);
+      else next.add(bibcode);
+      return next;
+    });
   const dragFrom = useRef<string | null>(null);
   const [focus, setFocus] = useState(0);
-  const [abstracts, setAbstracts] = useStoredValue('search-eval:abstracts', 'all');
+  const [abstracts, setAbstracts] = useStoredValue('search-eval:abstracts', 'none');
   const [keysOn, setKeysOn] = useStoredValue('search-eval:keys', 'on');
 
   // A new tweak brings new records: take the server's board as the new start.
@@ -152,6 +158,17 @@ function BoardInner({ session, board, rater, whenSorted }: Props & { rater: stri
     [columns, commit],
   );
 
+  // Move several cards at once, keeping their order, to the end of a column.
+  const moveMany = (bibcodes: string[], target: string) => {
+    const moving = new Set(bibcodes);
+    const next: Columns = {};
+    Object.entries(columns).forEach(([key, list]) => (next[key] = list.filter((b) => !moving.has(b))));
+    const inOrder = Object.values(columns).flat().filter((b) => moving.has(b));
+    next[target] = [...next[target], ...inOrder];
+    setSelected(new Set());
+    commit(next);
+  };
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -191,6 +208,18 @@ function BoardInner({ session, board, rater, whenSorted }: Props & { rater: stri
       const newIndex = list.indexOf(String(over.id));
       if (newIndex >= 0 && oldIndex !== newIndex) next = { ...columns, [container]: arrayMove(list, oldIndex, newIndex) };
     }
+    // Dragging a ticked card carries every ticked card, placed right after it.
+    if (selected.has(String(active.id)) && selected.size > 1) {
+      const others = new Set([...selected].filter((b) => b !== active.id));
+      const stripped: Columns = {};
+      Object.entries(next).forEach(([key, list]) => (stripped[key] = list.filter((b) => !others.has(b))));
+      const inOrder = Object.values(next).flat().filter((b) => others.has(b));
+      const list = stripped[container];
+      const at = list.indexOf(String(active.id)) + 1;
+      stripped[container] = [...list.slice(0, at), ...inOrder, ...list.slice(at)];
+      next = stripped;
+      setSelected(new Set());
+    }
     const nextOrdered = new Set(ordered);
     const grade = board.groups.find((g) => groupKey(g.grade) === container)?.grade;
     // A move that started and ended in the same group is the rater ordering it.
@@ -224,6 +253,7 @@ function BoardInner({ session, board, rater, whenSorted }: Props & { rater: stri
       if (e.key === 'j') setFocus((f) => Math.min(f + 1, unsorted.length - 1));
       else if (e.key === 'k') setFocus((f) => Math.max(f - 1, 0));
       else if (bibcode && e.key === 's') moveTo(bibcode, SKIP);
+      else if (bibcode && e.key === 'x') toggle(bibcode);
       else {
         const group = board.groups.find((g) => keyFor(g.grade) === e.key);
         if (!group || !bibcode) return;
@@ -238,355 +268,382 @@ function BoardInner({ session, board, rater, whenSorted }: Props & { rater: stri
   const sortedCount = Object.entries(columns).reduce((n, [k, v]) => (k === UNSORTED ? n : n + v.length), 0);
   const total = sortedCount + unsorted.length;
 
+  const keysHint = `${board.groups.map((g) => `${keyFor(g.grade)}`).join('/')}/s`;
+
   return (
     <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>
-      <Grid templateColumns={{ base: '1fr', xl: 'minmax(0, 1.2fr) minmax(0, 1fr)' }} gap={5} alignItems="start">
-        <Box as="section" aria-labelledby="left-heading" minW={0}>
-          {unsorted.length > 0 ? (
-            <>
-              <Flex align="baseline" gap={3} wrap="wrap" mb={1}>
-                <Heading as="h2" size="md" id="left-heading">
-                  To sort
-                </Heading>
-                <Text fontSize="sm" color="gray.600" aria-live="polite">
-                  {sortedCount} of {total} sorted
-                </Text>
-                <HStack ml="auto" spacing={4}>
-                  <HStack>
-                    <Switch id="abstracts" isChecked={abstracts === 'all'} onChange={(e) => setAbstracts(e.target.checked ? 'all' : 'none')} />
-                    <Text as="label" htmlFor="abstracts" fontSize="sm">
-                      Abstracts
-                    </Text>
-                  </HStack>
-                  <HStack>
-                    <Switch id="keys" isChecked={keysOn === 'on'} onChange={(e) => setKeysOn(e.target.checked ? 'on' : 'off')} />
-                    <Text as="label" htmlFor="keys" fontSize="sm">
-                      Keys
-                    </Text>
-                  </HStack>
-                </HStack>
-              </Flex>
-              <Text fontSize="sm" color="gray.600" mb={3}>
-                Drag each record into a group on the right; where you drop it in the group is its rank.
-                {keysOn === 'on' &&
-                  ` Or press ${board.groups.map((g) => `${keyFor(g.grade)} ${g.label.toLowerCase()}`).join(', ')}, s can't judge; j/k move.`}{' '}
-                The comparison appears here once everything is sorted.
-              </Text>
-              <Droppable id={UNSORTED}>
-                <SortableContext items={unsorted} strategy={verticalListSortingStrategy}>
-                  <Stack spacing={0}>
-                    {unsorted.map((bibcode, index) => (
-                      <SortableCard
-                        key={bibcode}
-                        record={records[bibcode]}
-                        showAbstract={abstracts === 'all'}
-                        isFocused={keysOn === 'on' && index === Math.min(focus, unsorted.length - 1)}
-                        onFocus={() => setFocus(index)}
-                        quickLabel={lowest.label}
-                        onQuick={() => moveTo(bibcode, groupKey(lowest.grade))}
-                      />
-                    ))}
-                  </Stack>
-                </SortableContext>
-              </Droppable>
-            </>
-          ) : (
-            <Box id="left-heading">{whenSorted}</Box>
-          )}
-        </Box>
-        <Box as="section" aria-labelledby="ranking-heading" position={{ xl: 'sticky' }} top={{ xl: 2 }} maxH={{ xl: 'calc(100vh - 1rem)' }} overflowY={{ xl: 'auto' }} pr={{ xl: 1 }}>
-          <Heading as="h2" size="md" id="ranking-heading" mb={1}>
-            Your ranking
-          </Heading>
-          <Text fontSize="sm" color="gray.600" mb={3}>
-            Best first. Drag within a group to order it, or into another group to change its rating. Alt+↑/↓ moves a focused
-            record.
+      <Stack spacing={3}>
+        <Flex align="center" gap={4} wrap="wrap">
+          <Text fontWeight="semibold" aria-live="polite">
+            {sortedCount} of {total} sorted
           </Text>
-          <Stack spacing={3}>
-            {board.groups.map((g) => (
-              <Group
-                key={g.grade}
-                id={groupKey(g.grade)}
-                label={g.label}
-                definition={g.definition}
-                scheme={SCHEME[g.grade] ?? 'gray'}
-                ordered={ordered.has(g.grade)}
-                bibcodes={columns[groupKey(g.grade)]}
-                records={records}
-                onReorder={(b, step) => reorderWithin(groupKey(g.grade), b, step)}
-                onUnsort={(b) => moveTo(b, UNSORTED)}
+          <Text fontSize="sm" color="gray.600" flex="1" minW="16rem">
+            Drag each card from <b>To sort</b> into the column that describes it. Higher in a column means better.
+            {keysOn === 'on' && ` Keys: ${keysHint} send the highlighted card, x ticks it, j/k move.`} Tick several cards to move them together.
+          </Text>
+          <HStack spacing={4}>
+            <HStack>
+              <Switch id="abstracts" isChecked={abstracts === 'all'} onChange={(e) => setAbstracts(e.target.checked ? 'all' : 'none')} />
+              <Text as="label" htmlFor="abstracts" fontSize="sm">
+                All abstracts
+              </Text>
+            </HStack>
+            <HStack>
+              <Switch id="keys" isChecked={keysOn === 'on'} onChange={(e) => setKeysOn(e.target.checked ? 'on' : 'off')} />
+              <Text as="label" htmlFor="keys" fontSize="sm">
+                Keys
+              </Text>
+            </HStack>
+          </HStack>
+        </Flex>
+        {selected.size > 0 && (
+          <Flex
+            align="center"
+            gap={3}
+            wrap="wrap"
+            bg="blue.50"
+            border="1px"
+            borderColor="blue.200"
+            borderRadius="md"
+            px={3}
+            py={2}
+            position="sticky"
+            top={0}
+            zIndex={2}
+            role="region"
+            aria-label="Selected records"
+          >
+            <Text fontWeight="semibold">{selected.size} selected</Text>
+            <Text fontSize="sm">Move to:</Text>
+            <ButtonGroup size="sm" spacing={1} flexWrap="wrap">
+              {board.groups.map((g) => (
+                <Button key={g.grade} colorScheme={SCHEME[g.grade] ?? 'gray'} variant="outline" bg="white" onClick={() => moveMany([...selected], groupKey(g.grade))}>
+                  {g.label}
+                </Button>
+              ))}
+              <Button variant="outline" bg="white" onClick={() => moveMany([...selected], SKIP)}>
+                {board.skip.label}
+              </Button>
+              <Button variant="outline" bg="white" onClick={() => moveMany([...selected], UNSORTED)}>
+                To sort
+              </Button>
+            </ButtonGroup>
+            <Button size="sm" variant="link" ml="auto" onClick={() => setSelected(new Set())}>
+              Clear
+            </Button>
+          </Flex>
+        )}
+        <Flex gap={3} overflowX="auto" align="stretch" pb={2}>
+          <BoardColumn id={UNSORTED} title="To sort" count={unsorted.length} scheme="blue" wide empty="All sorted">
+            {unsorted.map((bibcode, index) => (
+              <Card
+                key={bibcode}
+                record={records[bibcode]}
+                isSelected={selected.has(bibcode)}
+                onToggle={() => toggle(bibcode)}
+                showAbstract={abstracts === 'all'}
+                isFocused={keysOn === 'on' && index === Math.min(focus, unsorted.length - 1)}
+                onFocus={() => setFocus(index)}
+                quick={{ label: lowest.label, onClick: () => moveTo(bibcode, groupKey(lowest.grade)) }}
               />
             ))}
-            <Group
-              id={SKIP}
-              label={board.skip.label}
-              definition={board.skip.definition}
-              scheme="gray"
-              bibcodes={columns[SKIP]}
-              records={records}
-              onReorder={() => {}}
-              onUnsort={(b) => moveTo(b, UNSORTED)}
-              notes={notes}
-              onNote={(b, note) => commit(columns, ordered, { ...notes, [b]: note })}
-            />
-          </Stack>
-        </Box>
-      </Grid>
-      <DragOverlay>{activeId && records[activeId] ? <RowPreview record={records[activeId]} /> : null}</DragOverlay>
+          </BoardColumn>
+          {board.groups.map((g) => {
+            const key = groupKey(g.grade);
+            return (
+              <BoardColumn
+                key={g.grade}
+                id={key}
+                title={g.label}
+                definition={g.definition}
+                count={columns[key].length}
+                scheme={SCHEME[g.grade] ?? 'gray'}
+                keyHint={keysOn === 'on' ? keyFor(g.grade) : undefined}
+                ordered={columns[key].length > 1 ? ordered.has(g.grade) : undefined}
+              >
+                {columns[key].map((b, i) => (
+                  <Card
+                    key={b}
+                    record={records[b]}
+                    isSelected={selected.has(b)}
+                    onToggle={() => toggle(b)}
+                    showAbstract={abstracts === 'all'}
+                    position={i + 1}
+                    onReorder={(step) => reorderWithin(key, b, step)}
+                    onUnsort={() => moveTo(b, UNSORTED)}
+                  />
+                ))}
+              </BoardColumn>
+            );
+          })}
+          <BoardColumn
+            id={SKIP}
+            title={board.skip.label}
+            definition={board.skip.definition}
+            count={columns[SKIP].length}
+            scheme="gray"
+            keyHint={keysOn === 'on' ? 's' : undefined}
+          >
+            {columns[SKIP].map((b) => (
+              <Card
+                key={b}
+                record={records[b]}
+                isSelected={selected.has(b)}
+                onToggle={() => toggle(b)}
+                showAbstract={abstracts === 'all'}
+                onUnsort={() => moveTo(b, UNSORTED)}
+                note={notes[b] ?? ''}
+                onNote={(note) => commit(columns, ordered, { ...notes, [b]: note })}
+              />
+            ))}
+          </BoardColumn>
+        </Flex>
+        {unsorted.length === 0 && whenSorted}
+      </Stack>
+      <DragOverlay>
+        {activeId && records[activeId] ? (
+          <CardPreview record={records[activeId]} more={selected.has(activeId) ? selected.size - 1 : 0} />
+        ) : null}
+      </DragOverlay>
     </DndContext>
   );
 }
 
-function Droppable({ id, children }: { id: string; children: ReactNode }) {
-  const { setNodeRef, isOver } = useDroppable({ id });
-  return (
-    <Box ref={setNodeRef} minH="3rem" borderRadius="md" outline={isOver ? '2px dashed' : undefined} outlineColor="blue.300">
-      {children}
-    </Box>
-  );
-}
-
-function SortableCard({
-  record,
-  showAbstract,
-  isFocused,
-  onFocus,
-  quickLabel,
-  onQuick,
-}: {
-  record: BoardRecord;
-  showAbstract: boolean;
-  isFocused: boolean;
-  onFocus: () => void;
-  quickLabel: string;
-  onQuick: () => void;
-}) {
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
-    id: record.bibcode,
-  });
-  const [open, setOpen] = useState<boolean | null>(null);
-  const expanded = open ?? showAbstract;
-  useEffect(() => setOpen(null), [showAbstract]);
-  const title = plainTitle(record);
-  return (
-    <Box ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} opacity={isDragging ? 0.4 : 1} onClick={onFocus}>
-      <ResultItem
-        bibcode={record.bibcode}
-        title={record.title}
-        authors={record.authors}
-        year={record.year}
-        pub={record.pub}
-        isFocused={isFocused}
-        gutter={
-          <Box
-            as="button"
-            type="button"
-            ref={setActivatorNodeRef}
-            {...attributes}
-            {...listeners}
-            aria-label={`Drag ${title}`}
-            cursor="grab"
-            p={2}
-            borderRadius="sm"
-            _focusVisible={{ boxShadow: 'outline' }}
-            lineHeight={0}
-          >
-            <DragHandleIcon color="gray.500" boxSize={4} />
-          </Box>
-        }
-        aside={
-          <Button size="xs" variant="outline" colorScheme="red" onClick={onQuick} aria-label={`${quickLabel}: ${title}`} title={quickLabel}>
-            👎
-          </Button>
-        }
-      >
-        {record.abstract && (
-          <Box mt={1} fontSize="sm">
-            {expanded && <Text mb={1} dangerouslySetInnerHTML={{ __html: record.abstract }} />}
-            <Button size="xs" variant="link" onClick={() => setOpen(!expanded)} aria-expanded={expanded}>
-              {expanded ? 'Hide abstract' : 'Show abstract'}
-            </Button>
-          </Box>
-        )}
-      </ResultItem>
-    </Box>
-  );
-}
-
-function Group({
+// One column of the board: a coloured header with the rubric definition, and
+// a drop area that says so while it is empty.
+function BoardColumn({
   id,
-  label,
+  title,
   definition,
+  count,
   scheme,
+  wide,
+  keyHint,
   ordered,
-  bibcodes,
-  records,
-  onReorder,
-  onUnsort,
-  notes,
-  onNote,
+  empty = 'Drop here',
+  children,
 }: {
   id: string;
-  label: string;
-  definition: string;
+  title: string;
+  definition?: string;
+  count: number;
   scheme: string;
+  wide?: boolean;
+  keyHint?: string;
   ordered?: boolean;
-  bibcodes: string[];
-  records: Record<string, BoardRecord>;
-  onReorder: (bibcode: string, step: number) => void;
-  onUnsort: (bibcode: string) => void;
-  notes?: Record<string, string>;
-  onNote?: (bibcode: string, note: string) => void;
+  empty?: string;
+  children: ReactNode[];
 }) {
-  const colors = useColorModeColors();
   const { setNodeRef, isOver } = useDroppable({ id });
+  const items = (children as { key: string }[]).map((c) => String(c.key));
   return (
-    <Box
-      ref={setNodeRef}
+    <Flex
+      as="section"
+      aria-label={title}
+      direction="column"
+      flex={wide ? '1.5 0 260px' : '1 0 180px'}
+      bg="gray.50"
       border="1px"
-      borderColor={isOver ? 'blue.400' : colors.border}
-      borderLeftWidth="4px"
-      borderLeftColor={`${scheme}.400`}
+      borderColor={isOver ? 'blue.400' : 'gray.100'}
+      borderTop="4px solid"
+      borderTopColor={`${scheme}.400`}
       borderRadius="md"
-      p={2}
-      bg={isOver ? 'blue.50' : 'white'}
     >
-      <HStack spacing={2} align="baseline">
-        <Text fontWeight="bold">{label}</Text>
-        <Text fontSize="sm" color="gray.600">
-          {bibcodes.length}
-        </Text>
-        {ordered !== undefined && bibcodes.length > 1 && (
-          <Badge variant={ordered ? 'subtle' : 'outline'} colorScheme={ordered ? 'blue' : 'gray'} textTransform="none" ml="auto">
+      <Box px={2} pt={2} pb={1}>
+        <HStack spacing={2}>
+          <Text fontWeight="bold">{title}</Text>
+          <Text fontSize="sm" color="gray.600">
+            {count}
+          </Text>
+          {keyHint && (
+            <Badge variant="outline" colorScheme="gray" ml="auto" title={`Press ${keyHint}`} textTransform="none">
+              {keyHint}
+            </Badge>
+          )}
+        </HStack>
+        {definition && (
+          <Text fontSize="xs" color="gray.600" noOfLines={3} title={definition}>
+            {definition}
+          </Text>
+        )}
+        {ordered !== undefined && (
+          <Badge mt={1} variant={ordered ? 'subtle' : 'outline'} colorScheme={ordered ? 'blue' : 'gray'} textTransform="none">
             {ordered ? 'Your order' : 'Tied'}
           </Badge>
         )}
-      </HStack>
-      <Text fontSize="xs" color="gray.600" mb={bibcodes.length ? 2 : 0}>
-        {definition}
-      </Text>
-      <SortableContext items={bibcodes} strategy={verticalListSortingStrategy}>
-        <Stack as="ol" spacing={1} listStyleType="none" minH="1.5rem">
-          {bibcodes.map((b, i) => (
-            <SortableRow
-              key={b}
-              record={records[b]}
-              position={i + 1}
-              onReorder={(step) => onReorder(b, step)}
-              onUnsort={() => onUnsort(b)}
-              note={notes?.[b]}
-              onNote={onNote ? (n) => onNote(b, n) : undefined}
-            />
-          ))}
+      </Box>
+      <SortableContext items={items} strategy={verticalListSortingStrategy}>
+        <Stack ref={setNodeRef} spacing={2} p={2} flex="1" minH="12rem" maxH="70vh" overflowY="auto" bg={isOver ? 'blue.50' : undefined}>
+          {children}
+          {count === 0 && (
+            <Flex
+              flex="1"
+              minH="8rem"
+              align="center"
+              justify="center"
+              border="2px dashed"
+              borderColor={isOver ? 'blue.400' : 'gray.200'}
+              borderRadius="md"
+              color="gray.500"
+              fontSize="sm"
+            >
+              {empty}
+            </Flex>
+          )}
         </Stack>
       </SortableContext>
-    </Box>
+    </Flex>
   );
 }
 
-function SortableRow({
+// A short record card. The whole card drags; the abstract opens on demand, so
+// the columns stay scannable.
+function Card({
   record,
+  isSelected,
+  onToggle,
   position,
-  onReorder,
+  showAbstract = false,
+  isFocused,
+  onFocus,
+  quick,
   onUnsort,
+  onReorder,
   note,
   onNote,
 }: {
   record: BoardRecord;
-  position: number;
-  onReorder: (step: number) => void;
-  onUnsort: () => void;
+  isSelected: boolean;
+  onToggle: () => void;
+  position?: number;
+  showAbstract?: boolean;
+  isFocused?: boolean;
+  onFocus?: () => void;
+  quick?: { label: string; onClick: () => void };
+  onUnsort?: () => void;
+  onReorder?: (step: number) => void;
   note?: string;
   onNote?: (note: string) => void;
 }) {
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
-    id: record.bibcode,
-  });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: record.bibcode });
+  const [open, setOpen] = useState<boolean | null>(null);
+  const expanded = open ?? showAbstract;
+  useEffect(() => setOpen(null), [showAbstract]);
   const [draft, setDraft] = useState(note ?? '');
   const title = plainTitle(record);
+  const firstAuthor = record.authors.shown[0];
   return (
     <Box
-      as="li"
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
+      {...attributes}
+      {...listeners}
+      onKeyDown={(e: React.KeyboardEvent) => {
+        if (onReorder && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+          e.preventDefault();
+          onReorder(e.key === 'ArrowUp' ? -1 : 1);
+          return;
+        }
+        listeners?.onKeyDown?.(e);
+      }}
+      onClick={onFocus}
+      aria-label={`${title}${position ? `, position ${position}` : ''}. Drag to sort.`}
       opacity={isDragging ? 0.4 : 1}
-      bg="gray.50"
-      borderRadius="sm"
-      px={1}
-      py={1}
+      border="1px"
+      borderColor={isFocused || isSelected ? 'blue.500' : 'gray.200'}
+      bgColor={isSelected ? 'blue.50' : 'white'}
+      boxShadow={isFocused ? '0 0 0 1px var(--chakra-colors-blue-500)' : 'sm'}
+      borderRadius="md"
+      p={2}
+      cursor="grab"
+      _focusVisible={{ boxShadow: 'outline' }}
     >
-      <Flex align="center" gap={2}>
-        <Box
-          as="button"
-          type="button"
-          ref={setActivatorNodeRef}
-          {...attributes}
-          {...listeners}
-          onKeyDown={(e: React.KeyboardEvent) => {
-            if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-              e.preventDefault();
-              onReorder(e.key === 'ArrowUp' ? -1 : 1);
-              return;
-            }
-            listeners?.onKeyDown?.(e);
-          }}
-          aria-label={`Move ${title}, position ${position}`}
-          cursor="grab"
-          p={1}
-          borderRadius="sm"
-          _focusVisible={{ boxShadow: 'outline' }}
-          lineHeight={0}
-        >
-          <DragHandleIcon color="gray.500" />
+      <Flex gap={2} align="start">
+        <Checkbox
+          mt={0.5}
+          isChecked={isSelected}
+          onChange={onToggle}
+          aria-label={`Select ${title}`}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        />
+        {position !== undefined && (
+          <Text fontSize="sm" fontWeight="bold" color="gray.600">
+            {position}
+          </Text>
+        )}
+        <Box minW={0} flex="1">
+          <Link
+            href={`https://scixplorer.org/abs/${encodeURIComponent(record.bibcode)}/abstract`}
+            isExternal
+            fontSize="sm"
+            fontWeight="semibold"
+            noOfLines={3}
+            title={title}
+            dangerouslySetInnerHTML={{ __html: record.title ?? record.bibcode }}
+          />
+          <Text fontSize="xs" color="gray.600" noOfLines={1}>
+            {firstAuthor}
+            {record.authors.total > 1 ? ' et al.' : ''}
+            {record.year ? ` · ${record.year}` : ''}
+            {record.pub ? ` · ${record.pub}` : ''}
+          </Text>
         </Box>
-        <Text fontSize="sm" color="gray.600" minW="1.25rem">
-          {position}
-        </Text>
-        <Link
-          href={`https://scixplorer.org/abs/${encodeURIComponent(record.bibcode)}/abstract`}
-          isExternal
-          fontSize="sm"
-          fontWeight="semibold"
-          noOfLines={1}
-          flex="1"
-          minW={0}
-          title={title}
-          dangerouslySetInnerHTML={{ __html: record.title ?? record.bibcode }}
-        />
-        <Text fontSize="xs" color="gray.600" flexShrink={0}>
-          {record.year}
-        </Text>
-        <IconButton
-          aria-label={`Back to To sort: ${title}`}
-          title="Back to To sort"
-          icon={<CloseIcon boxSize={2} />}
-          size="xs"
-          variant="ghost"
-          onClick={onUnsort}
-        />
+      </Flex>
+      {expanded && record.abstract && (
+        <Text mt={2} fontSize="xs" maxH="14rem" overflowY="auto" dangerouslySetInnerHTML={{ __html: record.abstract }} />
+      )}
+      <Flex mt={1} gap={2} align="center">
+        {record.abstract && (
+          <Button size="xs" variant="link" onClick={() => setOpen(!expanded)} aria-expanded={expanded}>
+            {expanded ? 'Hide abstract' : 'Abstract'}
+          </Button>
+        )}
+        {quick && (
+          <Button size="xs" variant="outline" colorScheme="red" ml="auto" onClick={quick.onClick} aria-label={`${quick.label}: ${title}`} title={quick.label}>
+            👎
+          </Button>
+        )}
+        {onUnsort && (
+          <IconButton
+            aria-label={`Back to To sort: ${title}`}
+            title="Back to To sort"
+            icon={<CloseIcon boxSize={2} />}
+            size="xs"
+            variant="ghost"
+            ml="auto"
+            onClick={onUnsort}
+          />
+        )}
       </Flex>
       {onNote && (
         <Input
           size="xs"
           mt={1}
-          bg="white"
           placeholder="Why can't you judge it?"
           aria-label={`Why you can't judge ${title}`}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => draft !== (note ?? '') && onNote(draft)}
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
         />
       )}
     </Box>
   );
 }
 
-function RowPreview({ record }: { record: BoardRecord }) {
+function CardPreview({ record, more }: { record: BoardRecord; more: number }) {
   return (
-    <Flex align="center" gap={2} bg="white" border="1px" borderColor="blue.400" borderRadius="sm" px={2} py={1} boxShadow="md" maxW="32rem">
-      <DragHandleIcon color="gray.500" />
-      <Text fontSize="sm" fontWeight="semibold" color="blue.500" noOfLines={1} dangerouslySetInnerHTML={{ __html: record.title ?? record.bibcode }} />
-    </Flex>
+    <Box bg="white" border="1px" borderColor="blue.400" borderRadius="md" p={2} boxShadow="lg" maxW="18rem" cursor="grabbing" position="relative">
+      {more > 0 && (
+        <Badge position="absolute" top={-2} right={-2} colorScheme="blue" variant="solid" borderRadius="full">
+          +{more}
+        </Badge>
+      )}
+      <Text fontSize="sm" fontWeight="semibold" color="blue.500" noOfLines={3} dangerouslySetInnerHTML={{ __html: record.title ?? record.bibcode }} />
+    </Box>
   );
 }
 

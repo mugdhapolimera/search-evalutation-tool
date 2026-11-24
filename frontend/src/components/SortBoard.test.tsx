@@ -36,7 +36,7 @@ const lastPut = () => {
 beforeEach(() => {
   window.localStorage.setItem('search-eval:rater', 'Tester');
   window.localStorage.setItem('search-eval:keys', 'on');
-  window.localStorage.setItem('search-eval:abstracts', 'all');
+  window.localStorage.setItem('search-eval:abstracts', 'none');
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ session, board }) })));
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -58,7 +58,7 @@ test('one key press rates and ranks: the record joins the end of that group', as
     ],
     skipped: [],
   });
-  expect(within(screen.getByText('Relevant').closest('div')!.parentElement!).getByText('Title of A')).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Relevant' })).getByText('Title of A')).toBeInTheDocument();
 });
 
 test('thumbs down sends a record to the bottom group', async () => {
@@ -67,11 +67,29 @@ test('thumbs down sends a record to the bottom group', async () => {
   await waitFor(() => expect(lastPut()?.groups[3].bibcodes).toEqual(['B']));
 });
 
-test('the abstracts switch shows or hides every abstract at once', async () => {
+test('abstracts start closed; one switch opens or closes them all', async () => {
   renderBoard();
-  expect(screen.getAllByText(/Abstract of/)).toHaveLength(2);
-  await userEvent.click(screen.getByLabelText('Abstracts'));
   expect(screen.queryAllByText(/Abstract of/)).toHaveLength(0);
+  await userEvent.click(screen.getByLabelText('All abstracts'));
+  expect(screen.getAllByText(/Abstract of/)).toHaveLength(3);
+  await userEvent.click(screen.getByLabelText('All abstracts'));
+  expect(screen.queryAllByText(/Abstract of/)).toHaveLength(0);
+});
+
+test('ticked cards move together into one column', async () => {
+  renderBoard();
+  await userEvent.click(screen.getByLabelText('Select Title of A'));
+  await userEvent.click(screen.getByLabelText('Select Title of B'));
+  const bar = screen.getByRole('region', { name: 'Selected records' });
+  expect(within(bar).getByText('2 selected')).toBeInTheDocument();
+  await userEvent.click(within(bar).getByRole('button', { name: 'Highly relevant' }));
+  await waitFor(() => expect(lastPut()?.groups[0].bibcodes).toEqual(['A', 'B']));
+  expect(screen.queryByRole('region', { name: 'Selected records' })).toBeNull();
+});
+
+test('every empty column says it takes drops', () => {
+  renderBoard();
+  expect(screen.getAllByText('Drop here')).toHaveLength(4);
 });
 
 test('the to-sort list shows no rank, column or environment', () => {
@@ -79,12 +97,12 @@ test('the to-sort list shows no rank, column or environment', () => {
   expect(screen.queryByText(/Production|Tweak|Baseline/)).toBeNull();
 });
 
-test('when nothing is left to sort, the comparison takes its place', () => {
+test('when nothing is left to sort, the comparison appears', () => {
   renderWithProviders(
     <SortBoard session={session} board={{ ...board, unsorted: [] }} whenSorted={<p>comparison</p>} />,
   );
   expect(screen.getByText('comparison')).toBeInTheDocument();
-  expect(screen.queryByText('To sort')).toBeNull();
+  expect(within(screen.getByRole('region', { name: 'To sort' })).getByText('All sorted')).toBeInTheDocument();
 });
 
 test('sorting asks for the information need first', () => {

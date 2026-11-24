@@ -8,7 +8,7 @@ export function App() {
   return (
     <Box minH="100vh" display="flex" flexDirection="column">
       <NavBar />
-      <Container maxW="container.xl" px={4} pb={16} flex="1" as="main">
+      <Container maxW="1680px" px={{ base: 4, md: 6 }} pb={16} flex="1" as="main">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/sessions/:id" element={<Workspace />} />
