@@ -14,7 +14,14 @@ import {
   HStack,
   IconButton,
   Input,
+  Grid,
   Link,
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalContent,
+  ModalHeader,
+  ModalOverlay,
   Stack,
   Switch,
   Text,
@@ -90,6 +97,7 @@ function BoardInner({ session, board, rater, whenSorted }: Props & { rater: stri
   );
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [expanded, setExpanded] = useState<string | null>(null);
   const toggle = (bibcode: string) =>
     setSelected((current) => {
       const next = new Set(current);
@@ -269,6 +277,39 @@ function BoardInner({ session, board, rater, whenSorted }: Props & { rater: stri
   const total = sortedCount + unsorted.length;
 
   const keysHint = `${board.groups.map((g) => `${keyFor(g.grade)}`).join('/')}/s`;
+  const buckets: Bucket[] = [
+    ...board.groups.map((g) => ({
+      key: groupKey(g.grade),
+      grade: g.grade,
+      label: g.label,
+      definition: g.definition,
+      scheme: SCHEME[g.grade] ?? 'gray',
+      keyHint: keyFor(g.grade),
+    })),
+    { key: SKIP, label: board.skip.label, definition: board.skip.definition, scheme: 'gray', keyHint: 's' },
+  ];
+  const expandedBucket = buckets.find((b) => b.key === expanded);
+  const selectionBarProps = {
+    count: selected.size,
+    buckets,
+    onMove: (key: string) => moveMany([...selected], key),
+    onClear: () => setSelected(new Set()),
+  };
+  const bucketCard = (bucket: Bucket, b: string, i: number, compact: boolean) => (
+    <Card
+      key={b}
+      record={records[b]}
+      compact={compact}
+      isSelected={selected.has(b)}
+      onToggle={() => toggle(b)}
+      showAbstract={abstracts === 'all'}
+      position={bucket.grade !== undefined ? i + 1 : undefined}
+      onReorder={bucket.grade !== undefined ? (step) => reorderWithin(bucket.key, b, step) : undefined}
+      onUnsort={() => moveTo(b, UNSORTED)}
+      note={bucket.key === SKIP ? notes[b] ?? '' : undefined}
+      onNote={bucket.key === SKIP ? (note) => commit(columns, ordered, { ...notes, [b]: note }) : undefined}
+    />
+  );
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>
@@ -296,45 +337,9 @@ function BoardInner({ session, board, rater, whenSorted }: Props & { rater: stri
             </HStack>
           </HStack>
         </Flex>
-        {selected.size > 0 && (
-          <Flex
-            align="center"
-            gap={3}
-            wrap="wrap"
-            bg="blue.50"
-            border="1px"
-            borderColor="blue.200"
-            borderRadius="md"
-            px={3}
-            py={2}
-            position="sticky"
-            top={0}
-            zIndex={2}
-            role="region"
-            aria-label="Selected records"
-          >
-            <Text fontWeight="semibold">{selected.size} selected</Text>
-            <Text fontSize="sm">Move to:</Text>
-            <ButtonGroup size="sm" spacing={1} flexWrap="wrap">
-              {board.groups.map((g) => (
-                <Button key={g.grade} colorScheme={SCHEME[g.grade] ?? 'gray'} variant="outline" bg="white" onClick={() => moveMany([...selected], groupKey(g.grade))}>
-                  {g.label}
-                </Button>
-              ))}
-              <Button variant="outline" bg="white" onClick={() => moveMany([...selected], SKIP)}>
-                {board.skip.label}
-              </Button>
-              <Button variant="outline" bg="white" onClick={() => moveMany([...selected], UNSORTED)}>
-                To sort
-              </Button>
-            </ButtonGroup>
-            <Button size="sm" variant="link" ml="auto" onClick={() => setSelected(new Set())}>
-              Clear
-            </Button>
-          </Flex>
-        )}
-        <Flex gap={3} overflowX="auto" align="stretch" pb={2}>
-          <BoardColumn id={UNSORTED} title="To sort" count={unsorted.length} scheme="blue" wide empty="All sorted">
+        {selected.size > 0 && !expanded && <SelectionBar {...selectionBarProps} />}
+        <Grid templateColumns={{ base: '1fr', lg: 'minmax(0, 2fr) minmax(300px, 1fr)' }} gap={4} alignItems="start">
+          <BoardColumn id={UNSORTED} title="To sort" count={unsorted.length} scheme="blue" empty="All sorted">
             {unsorted.map((bibcode, index) => (
               <Card
                 key={bibcode}
@@ -348,64 +353,122 @@ function BoardInner({ session, board, rater, whenSorted }: Props & { rater: stri
               />
             ))}
           </BoardColumn>
-          {board.groups.map((g) => {
-            const key = groupKey(g.grade);
-            return (
-              <BoardColumn
-                key={g.grade}
-                id={key}
-                title={g.label}
-                definition={g.definition}
-                count={columns[key].length}
-                scheme={SCHEME[g.grade] ?? 'gray'}
-                keyHint={keysOn === 'on' ? keyFor(g.grade) : undefined}
-                ordered={columns[key].length > 1 ? ordered.has(g.grade) : undefined}
-              >
-                {columns[key].map((b, i) => (
-                  <Card
-                    key={b}
-                    record={records[b]}
-                    isSelected={selected.has(b)}
-                    onToggle={() => toggle(b)}
-                    showAbstract={abstracts === 'all'}
-                    position={i + 1}
-                    onReorder={(step) => reorderWithin(key, b, step)}
-                    onUnsort={() => moveTo(b, UNSORTED)}
-                  />
-                ))}
-              </BoardColumn>
-            );
-          })}
-          <BoardColumn
-            id={SKIP}
-            title={board.skip.label}
-            definition={board.skip.definition}
-            count={columns[SKIP].length}
-            scheme="gray"
-            keyHint={keysOn === 'on' ? 's' : undefined}
+          <Stack
+            spacing={3}
+            position={{ lg: 'sticky' }}
+            top={{ lg: 2 }}
+            maxH={{ lg: 'calc(100vh - 1rem)' }}
+            overflowY={{ lg: 'auto' }}
+            aria-label="Rating groups"
           >
-            {columns[SKIP].map((b) => (
-              <Card
-                key={b}
-                record={records[b]}
-                isSelected={selected.has(b)}
-                onToggle={() => toggle(b)}
-                showAbstract={abstracts === 'all'}
-                onUnsort={() => moveTo(b, UNSORTED)}
-                note={notes[b] ?? ''}
-                onNote={(note) => commit(columns, ordered, { ...notes, [b]: note })}
-              />
+            {buckets.map((bucket) => (
+              <BoardColumn
+                key={bucket.key}
+                id={bucket.key}
+                title={bucket.label}
+                definition={bucket.definition}
+                count={columns[bucket.key].length}
+                scheme={bucket.scheme}
+                keyHint={keysOn === 'on' ? bucket.keyHint : undefined}
+                ordered={bucket.grade !== undefined && columns[bucket.key].length > 1 ? ordered.has(bucket.grade) : undefined}
+                compact
+                isExpanded={expanded === bucket.key}
+                onExpand={() => setExpanded(bucket.key)}
+              >
+                {expanded === bucket.key ? [] : columns[bucket.key].map((b, i) => bucketCard(bucket, b, i, true))}
+              </BoardColumn>
             ))}
-          </BoardColumn>
-        </Flex>
+          </Stack>
+        </Grid>
         {unsorted.length === 0 && whenSorted}
       </Stack>
+      <Modal isOpen={!!expandedBucket} onClose={() => setExpanded(null)} size="3xl" scrollBehavior="inside">
+        <ModalOverlay />
+        <ModalContent>
+          {expandedBucket && (
+            <>
+              <ModalHeader>
+                {expandedBucket.label}{' '}
+                <Text as="span" fontSize="md" color="gray.600" fontWeight="normal">
+                  {columns[expandedBucket.key].length}
+                </Text>
+                <Text fontSize="sm" color="gray.600" fontWeight="normal">
+                  {expandedBucket.definition}
+                </Text>
+              </ModalHeader>
+              <ModalCloseButton />
+              <ModalBody>
+                {selected.size > 0 && <SelectionBar {...selectionBarProps} />}
+                <Text fontSize="sm" color="gray.600" mb={2}>
+                  Drag to put the best first, or tick records to move them to another group.
+                </Text>
+                <SortableContext items={columns[expandedBucket.key]} strategy={verticalListSortingStrategy}>
+                  <Stack spacing={2} pb={4}>
+                    {columns[expandedBucket.key].map((b, i) => bucketCard(expandedBucket, b, i, false))}
+                    {columns[expandedBucket.key].length === 0 && <Text color="gray.500">Nothing here yet.</Text>}
+                  </Stack>
+                </SortableContext>
+              </ModalBody>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
       <DragOverlay>
         {activeId && records[activeId] ? (
           <CardPreview record={records[activeId]} more={selected.has(activeId) ? selected.size - 1 : 0} />
         ) : null}
       </DragOverlay>
     </DndContext>
+  );
+}
+
+type Bucket = { key: string; grade?: number; label: string; definition: string; scheme: string; keyHint: string };
+
+function SelectionBar({
+  count,
+  buckets,
+  onMove,
+  onClear,
+}: {
+  count: number;
+  buckets: Bucket[];
+  onMove: (key: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <Flex
+      align="center"
+      gap={3}
+      wrap="wrap"
+      bg="blue.50"
+      border="1px"
+      borderColor="blue.200"
+      borderRadius="md"
+      px={3}
+      py={2}
+      mb={2}
+      position="sticky"
+      top={0}
+      zIndex={2}
+      role="region"
+      aria-label="Selected records"
+    >
+      <Text fontWeight="semibold">{count} selected</Text>
+      <Text fontSize="sm">Move to:</Text>
+      <ButtonGroup size="sm" spacing={1} flexWrap="wrap">
+        {buckets.map((b) => (
+          <Button key={b.key} colorScheme={b.scheme} variant="outline" bg="white" onClick={() => onMove(b.key)}>
+            {b.label}
+          </Button>
+        ))}
+        <Button variant="outline" bg="white" onClick={() => onMove(UNSORTED)}>
+          To sort
+        </Button>
+      </ButtonGroup>
+      <Button size="sm" variant="link" ml="auto" onClick={onClear}>
+        Clear
+      </Button>
+    </Flex>
   );
 }
 
@@ -417,9 +480,11 @@ function BoardColumn({
   definition,
   count,
   scheme,
-  wide,
   keyHint,
   ordered,
+  compact,
+  isExpanded,
+  onExpand,
   empty = 'Drop here',
   children,
 }: {
@@ -428,9 +493,11 @@ function BoardColumn({
   definition?: string;
   count: number;
   scheme: string;
-  wide?: boolean;
   keyHint?: string;
   ordered?: boolean;
+  compact?: boolean;
+  isExpanded?: boolean;
+  onExpand?: () => void;
   empty?: string;
   children: ReactNode[];
 }) {
@@ -441,7 +508,6 @@ function BoardColumn({
       as="section"
       aria-label={title}
       direction="column"
-      flex={wide ? '1.5 0 260px' : '1 0 180px'}
       bg="gray.50"
       border="1px"
       borderColor={isOver ? 'blue.400' : 'gray.100'}
@@ -455,30 +521,51 @@ function BoardColumn({
           <Text fontSize="sm" color="gray.600">
             {count}
           </Text>
-          {keyHint && (
-            <Badge variant="outline" colorScheme="gray" ml="auto" title={`Press ${keyHint}`} textTransform="none">
-              {keyHint}
+          {ordered !== undefined && (
+            <Badge variant={ordered ? 'subtle' : 'outline'} colorScheme={ordered ? 'blue' : 'gray'} textTransform="none">
+              {ordered ? 'Your order' : 'Tied'}
             </Badge>
           )}
+          <HStack ml="auto" spacing={1}>
+            {keyHint && (
+              <Badge variant="outline" colorScheme="gray" title={`Press ${keyHint}`} textTransform="none">
+                {keyHint}
+              </Badge>
+            )}
+            {onExpand && count > 0 && (
+              <Button size="xs" variant="ghost" onClick={onExpand} aria-label={`Expand ${title}`}>
+                Expand
+              </Button>
+            )}
+          </HStack>
         </HStack>
         {definition && (
-          <Text fontSize="xs" color="gray.600" noOfLines={3} title={definition}>
+          <Text fontSize="xs" color="gray.600" noOfLines={compact ? 2 : 3} title={definition}>
             {definition}
           </Text>
         )}
-        {ordered !== undefined && (
-          <Badge mt={1} variant={ordered ? 'subtle' : 'outline'} colorScheme={ordered ? 'blue' : 'gray'} textTransform="none">
-            {ordered ? 'Your order' : 'Tied'}
-          </Badge>
-        )}
       </Box>
       <SortableContext items={items} strategy={verticalListSortingStrategy}>
-        <Stack ref={setNodeRef} spacing={2} p={2} flex="1" minH="12rem" maxH="70vh" overflowY="auto" bg={isOver ? 'blue.50' : undefined}>
+        <Stack
+          ref={setNodeRef}
+          spacing={compact ? 1 : 2}
+          p={2}
+          flex="1"
+          minH={compact ? '3.5rem' : '12rem'}
+          maxH={compact ? '14rem' : '75vh'}
+          overflowY="auto"
+          bg={isOver ? 'blue.50' : undefined}
+        >
           {children}
+          {isExpanded && (
+            <Text fontSize="sm" color="gray.500" textAlign="center" py={2}>
+              Open in a window
+            </Text>
+          )}
           {count === 0 && (
             <Flex
               flex="1"
-              minH="8rem"
+              minH={compact ? '2.5rem' : '8rem'}
               align="center"
               justify="center"
               border="2px dashed"
@@ -500,6 +587,7 @@ function BoardColumn({
 // the columns stay scannable.
 function Card({
   record,
+  compact = false,
   isSelected,
   onToggle,
   position,
@@ -513,6 +601,7 @@ function Card({
   onNote,
 }: {
   record: BoardRecord;
+  compact?: boolean;
   isSelected: boolean;
   onToggle: () => void;
   position?: number;
@@ -554,7 +643,7 @@ function Card({
       bgColor={isSelected ? 'blue.50' : 'white'}
       boxShadow={isFocused ? '0 0 0 1px var(--chakra-colors-blue-500)' : 'sm'}
       borderRadius="md"
-      p={2}
+      p={compact ? 1.5 : 2}
       cursor="grab"
       _focusVisible={{ boxShadow: 'outline' }}
     >
@@ -579,22 +668,32 @@ function Card({
             isExternal
             fontSize="sm"
             fontWeight="semibold"
-            noOfLines={3}
+            noOfLines={compact ? 2 : 3}
             title={title}
             dangerouslySetInnerHTML={{ __html: record.title ?? record.bibcode }}
           />
-          <Text fontSize="xs" color="gray.600" noOfLines={1}>
+          <Text fontSize="xs" color="gray.600" noOfLines={1} display={compact ? 'none' : undefined}>
             {firstAuthor}
             {record.authors.total > 1 ? ' et al.' : ''}
             {record.year ? ` · ${record.year}` : ''}
             {record.pub ? ` · ${record.pub}` : ''}
           </Text>
         </Box>
+        {compact && onUnsort && (
+          <IconButton
+            aria-label={`Back to To sort: ${title}`}
+            title="Back to To sort"
+            icon={<CloseIcon boxSize={2} />}
+            size="xs"
+            variant="ghost"
+            onClick={onUnsort}
+          />
+        )}
       </Flex>
-      {expanded && record.abstract && (
+      {!compact && expanded && record.abstract && (
         <Text mt={2} fontSize="xs" maxH="14rem" overflowY="auto" dangerouslySetInnerHTML={{ __html: record.abstract }} />
       )}
-      <Flex mt={1} gap={2} align="center">
+      <Flex mt={1} gap={2} align="center" display={compact ? 'none' : 'flex'}>
         {record.abstract && (
           <Button size="xs" variant="link" onClick={() => setOpen(!expanded)} aria-expanded={expanded}>
             {expanded ? 'Hide abstract' : 'Abstract'}

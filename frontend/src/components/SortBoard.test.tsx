@@ -71,7 +71,7 @@ test('abstracts start closed; one switch opens or closes them all', async () => 
   renderBoard();
   expect(screen.queryAllByText(/Abstract of/)).toHaveLength(0);
   await userEvent.click(screen.getByLabelText('All abstracts'));
-  expect(screen.getAllByText(/Abstract of/)).toHaveLength(3);
+  expect(screen.getAllByText(/Abstract of/)).toHaveLength(2); // stacked groups stay compact
   await userEvent.click(screen.getByLabelText('All abstracts'));
   expect(screen.queryAllByText(/Abstract of/)).toHaveLength(0);
 });
@@ -87,9 +87,18 @@ test('ticked cards move together into one column', async () => {
   expect(screen.queryByRole('region', { name: 'Selected records' })).toBeNull();
 });
 
-test('every empty column says it takes drops', () => {
+test('every empty group says it takes drops', () => {
   renderBoard();
   expect(screen.getAllByText('Drop here')).toHaveLength(4);
+});
+
+test('a group expands into a window with full cards', async () => {
+  renderBoard();
+  await userEvent.click(screen.getByRole('button', { name: 'Expand Relevant' }));
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByText('Title of C')).toBeInTheDocument();
+  expect(within(dialog).getByRole('button', { name: 'Abstract' })).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Relevant', hidden: true })).getByText('Open in a window')).toBeInTheDocument();
 });
 
 test('the to-sort list shows no rank, column or environment', () => {
